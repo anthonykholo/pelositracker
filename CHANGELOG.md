@@ -6,6 +6,7 @@
 - Added configurable regions, markets, bookmakers, and a quota-safer polling default.
 - Filtered sport-wide responses to the registered matchup and preserved spread/total points.
 - Added sanitized terminal warnings and adapter tests without consuming API credits.
+- Changed the default The Odds API polling interval to 45 seconds.
 
 ## 0.3.1 — Python 3.14 compatibility
 

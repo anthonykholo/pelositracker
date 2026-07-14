@@ -35,7 +35,7 @@ The settings file is optional. To customize it, copy `env.example` to `.env` and
 
 ```env
 THE_ODDS_API_KEY=
-ODDS_POLL_SECONDS=30
+ODDS_POLL_SECONDS=45
 ODDS_REGIONS=us
 ODDS_MARKETS=h2h,spreads,totals
 ODDS_BOOKMAKERS=
