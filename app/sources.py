@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 from datetime import datetime, timezone
@@ -11,6 +12,9 @@ import httpx
 import websockets
 
 from .models import Event, GameState, Quote
+
+
+logger = logging.getLogger(__name__)
 
 
 def parse_jsonish(value):
@@ -114,39 +118,95 @@ def american_probability(price: float) -> float:
     return 100 / (price + 100) if price > 0 else (-price) / ((-price) + 100)
 
 
+def odds_api_request(event: Event, key: str) -> tuple[str, dict[str, str]]:
+    """Build an authenticated The Odds API V4 request without exposing the key in logs."""
+    root = f"https://api.the-odds-api.com/v4/sports/{event.odds_api_sport}"
+    if event.odds_api_event_id:
+        url = f"{root}/events/{event.odds_api_event_id}/odds"
+    else:
+        url = f"{root}/odds"
+    params = {
+        "apiKey": key,
+        "regions": os.getenv("ODDS_REGIONS", "us"),
+        "markets": os.getenv("ODDS_MARKETS", "h2h,spreads,totals"),
+        "oddsFormat": "american",
+        "dateFormat": "iso",
+    }
+    bookmakers = os.getenv("ODDS_BOOKMAKERS", "").strip()
+    if bookmakers:
+        params["bookmakers"] = bookmakers
+    return url, params
+
+
+def _same_matchup(event: Event, game: dict) -> bool:
+    home = str(game.get("home_team", "")).strip().casefold()
+    away = str(game.get("away_team", "")).strip().casefold()
+    return home == event.home.strip().casefold() and away == event.away.strip().casefold()
+
+
+def _outcome_label(market: str, outcome: dict) -> str:
+    name = str(outcome.get("name", ""))
+    point = outcome.get("point")
+    if point is None:
+        return name
+    point = float(point)
+    if market == "spreads":
+        return f"{name} {point:+g}"
+    if market == "totals":
+        return f"{name} {point:g}"
+    return name
+
+
+def odds_api_quotes(event: Event, payload: dict | list[dict]) -> list[Quote]:
+    games = [payload] if isinstance(payload, dict) else payload
+    quotes = []
+    for game in games:
+        if event.odds_api_event_id:
+            if str(game.get("id")) != event.odds_api_event_id:
+                continue
+        elif not _same_matchup(event, game):
+            continue
+        for bookmaker in game.get("bookmakers", []):
+            source = bookmaker.get("title") or bookmaker.get("key", "sportsbook")
+            for market in bookmaker.get("markets", []):
+                market_key = market.get("key", "h2h")
+                for outcome in market.get("outcomes", []):
+                    price = float(outcome["price"])
+                    if price == 0:
+                        continue
+                    quotes.append(Quote(
+                        event.id,
+                        market_key,
+                        _outcome_label(market_key, outcome),
+                        american_probability(price),
+                        source,
+                        decimal_odds=(price / 100 + 1 if price > 0 else 100 / -price + 1),
+                    ))
+    return quotes
+
+
 async def odds_api_poll(event: Event, emit: Callable[[list[Quote]], Awaitable[None]]):
     key = os.getenv("THE_ODDS_API_KEY")
     if not key or not event.odds_api_sport:
         return
-    interval = max(1.0, float(os.getenv("ODDS_POLL_SECONDS", "5")))
+    interval = max(1.0, float(os.getenv("ODDS_POLL_SECONDS", "30")))
+    url, params = odds_api_request(event, key)
     async with httpx.AsyncClient(timeout=15) as client:
         while True:
             try:
-                params = {"sport_key": event.odds_api_sport, "markets": "h2h,spreads,totals"}
-                if event.odds_api_event_id:
-                    params["event_id"] = event.odds_api_event_id
-                response = await client.get("https://api.theoddsapi.com/odds/", params=params,
-                                            headers={"x-api-key": key})
+                response = await client.get(url, params=params)
                 response.raise_for_status()
-                quotes = []
-                for game in response.json():
-                    if event.odds_api_event_id and str(game.get("id")) != event.odds_api_event_id:
-                        continue
-                    for bookmaker in game.get("bookmakers", []):
-                        source = bookmaker.get("title") or bookmaker.get("key", "sportsbook")
-                        for market in bookmaker.get("markets", []):
-                            for outcome in market.get("outcomes", []):
-                                price = float(outcome["price"])
-                                quotes.append(Quote(event.id, market.get("key", "h2h"),
-                                                    outcome.get("name", ""), american_probability(price),
-                                                    source, decimal_odds=(price / 100 + 1 if price > 0 else
-                                                    100 / -price + 1)))
+                quotes = odds_api_quotes(event, response.json())
                 if quotes:
                     await emit(quotes)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                pass
+            except httpx.HTTPStatusError as exc:
+                logger.warning("The Odds API returned HTTP %s for %s",
+                               exc.response.status_code, event.name)
+            except Exception as exc:
+                logger.warning("The Odds API poll failed for %s (%s)", event.name,
+                               type(exc).__name__)
             await asyncio.sleep(interval)
 
 

@@ -35,13 +35,16 @@ The settings file is optional. To customize it, copy `env.example` to `.env` and
 
 ```env
 THE_ODDS_API_KEY=
-ODDS_POLL_SECONDS=5
+ODDS_POLL_SECONDS=30
+ODDS_REGIONS=us
+ODDS_MARKETS=h2h,spreads,totals
+ODDS_BOOKMAKERS=
 SIGNAL_CONFIDENCE_THRESHOLD=72
 SIGNAL_EDGE_THRESHOLD=0.035
 MAX_DATA_AGE_SECONDS=20
 ```
 
-The Polymarket public feeds do not require a key. TheOddsAPI integration remains disabled until `THE_ODDS_API_KEY` is set.
+The Polymarket public feeds do not require a key. The Odds API integration remains disabled until `THE_ODDS_API_KEY` is set. The default request uses American prices from U.S. bookmakers. Keep the key only in `.env`; that file is excluded from Git.
 
 ## Registering an event
 
@@ -60,6 +63,8 @@ Use the dashboard or `POST /api/events`:
 ```
 
 For Polymarket, the slug is the portion after `/event/` in the event URL.
+
+For The Odds API, get valid sport keys from `GET /v4/sports` and event IDs from `GET /v4/sports/{sport}/events`. Supplying an event ID is recommended because it prevents team-name mismatches and limits the response to one event. Polling three markets in one region generally costs three usage credits per successful request, so choose `ODDS_POLL_SECONDS` according to your plan.
 
 ## Dashboard guide
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 — The Odds API V4
+
+- Corrected authentication and request paths for The Odds API V4.
+- Added configurable regions, markets, bookmakers, and a quota-safer polling default.
+- Filtered sport-wide responses to the registered matchup and preserved spread/total points.
+- Added sanitized terminal warnings and adapter tests without consuming API credits.
+
 ## 0.3.1 — Python 3.14 compatibility
 
 - Upgraded PyO3 to 0.29 for Python 3.14 support.
