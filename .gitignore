@@ -4,10 +4,27 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
 
-# Env / secrets
+# Rust
+native_engine/target/
+target/
+
+# Native build outputs
+*.pyd
+*.pdb
+*.so
+*.dylib
+
+# Environment / secrets
 .env
 
-# OS
+# Local work and deliverables
+work/
+outputs/
+
+# Editors / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db

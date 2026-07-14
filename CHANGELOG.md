@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — Python 3.14 compatibility
+
+- Upgraded PyO3 to 0.29 for Python 3.14 support.
+- Refreshed the pinned Python dependencies and verified them on Python 3.14.
+- Added a visible `env.example` so browser-based GitHub uploads do not omit the template.
+- Made `.env` optional at startup and added Python 3.14 to CI.
+
 ## 0.3.0 — Merged release
 
 - Merged the redesigned compact dashboard with the Rust-backed application.

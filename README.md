@@ -1,30 +1,51 @@
 # Live Edge Monitor
 
-An API-first, paper-only live sports monitoring prototype. Register an event, stream score and market updates, and receive explainable signals gated by freshness, source agreement, spread, estimated edge, and a configurable signal-quality threshold.
+A paper-only live sports market monitor with a Rust scoring engine and a FastAPI dashboard. It combines live game state, Polymarket order-book data, and optional sportsbook prices to produce explainable `WATCH` or `PAPER BET` signals.
 
-## What it does
+> This project never places wagers. Signal quality is not a predicted win rate, and the output is not financial advice.
 
-- Streams public Polymarket order-book updates and its sports-result WebSocket.
-- Optionally polls TheOddsAPI for normalized sportsbook moneyline/spread/total prices.
-- Includes a one-click simulation so the complete pipeline works without API credentials.
-- Removes binary-market vig source by source, blends a deliberately capped recent-scoring adjustment, then compares the estimate with the best executable price.
-- Emits `PAPER_BET` only when every safety gate passes. It never places a wager.
+## Features
 
-## Run
+- Public Polymarket market and sports WebSocket streams.
+- Optional multi-sportsbook polling through TheOddsAPI.
+- Rust-native consensus, momentum, freshness, spread, edge, and confidence calculations.
+- Paper-signal safety gates with plain-language explanations.
+- Responsive dashboard with persistent explanation panels.
+- Event removal that cancels feed tasks and clears in-memory event data.
+- Credential-free simulation mode for testing the complete pipeline.
 
-```powershell
+## Quick start on Windows
+
+Requirements: Python 3.10 through 3.15, Rust, and Microsoft C++ Build Tools.
+
+```cmd
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-uvicorn app.main:app --reload
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+build-rust.cmd
+start.cmd
 ```
 
-Open `http://127.0.0.1:8000`, then choose **Launch live demo**. Environment values are read by the process; PowerShell users can set them with `$env:THE_ODDS_API_KEY="..."` before starting. The app intentionally does not load or expose secret values to the browser.
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765), then select **Launch live demo**.
 
-## Registering a real event
+`start.cmd` starts the server from the correct project directory. You only need to rerun `build-rust.cmd` after changing `native_engine/src/lib.rs`.
 
-Use the dashboard form or `POST /api/events`. For Polymarket, provide the exact event slug. For TheOddsAPI, provide its sport key and preferably its event ID so the poller does not need to scan a slate.
+## Configuration
+
+The settings file is optional. To customize it, copy `env.example` to `.env` and set any values you want to override:
+
+```env
+THE_ODDS_API_KEY=
+ODDS_POLL_SECONDS=5
+SIGNAL_CONFIDENCE_THRESHOLD=72
+SIGNAL_EDGE_THRESHOLD=0.035
+MAX_DATA_AGE_SECONDS=20
+```
+
+The Polymarket public feeds do not require a key. TheOddsAPI integration remains disabled until `THE_ODDS_API_KEY` is set.
+
+## Registering an event
+
+Use the dashboard or `POST /api/events`:
 
 ```json
 {
@@ -38,14 +59,39 @@ Use the dashboard form or `POST /api/events`. For Polymarket, provide the exact 
 }
 ```
 
-## Important model limits
+For Polymarket, the slug is the portion after `/event/` in the event URL.
 
-The displayed confidence is a **signal-quality score**, not a calibrated probability of winning. The initial momentum feature is a transparent capped scoring-run heuristic; it must be replaced by sport-specific models trained and walk-forward tested on timestamped historical data before any real-money use. Avoid survivorship and look-ahead bias, include latency and fill/slippage, and calibrate separately by sport, league, market, and game phase.
+## Dashboard guide
 
-For production, use a licensed low-latency play-by-play feed such as Sportradar as the authoritative game-state source. Consumer-site scraping is not implemented because it is fragile, can violate terms, and offers no latency or correctness guarantee.
+- **WATCH**: one or more safety gates failed.
+- **PAPER BET**: every configured gate passed; no wager is placed.
+- **Model probability**: consensus probability plus a deliberately capped recent-scoring adjustment.
+- **Estimated edge**: model probability minus the best executable market probability.
+- **Signal quality**: a 0–100 quality score based on freshness, source agreement/count, spread, and edge strength—not a win probability.
+
+## Architecture
+
+```text
+Polymarket WebSockets ─┐
+TheOddsAPI polling ────┼─> Python feed adapters ─> Rust signal engine ─> FastAPI API ─> Dashboard
+Demo stream ───────────┘
+```
+
+- `app/`: API, adapters, in-memory store, Python/Rust bridge, and dashboard.
+- `native_engine/`: PyO3 Rust crate containing the scoring logic.
+- `tests/`: engine compatibility and API lifecycle tests.
+- `build-rust.cmd`: reproducible Windows native-extension build.
+- `start.cmd`: local server launcher on port 8765.
 
 ## Tests
 
-```powershell
-pytest -q
+```cmd
+.venv\Scripts\python.exe -m pytest -q
+cargo test --manifest-path native_engine\Cargo.toml
 ```
+
+## Model limitations
+
+The current momentum component is a transparent capped heuristic, not a trained sport-specific model. Before considering real-money use, train and walk-forward test by sport, league, market, and game phase; calibrate probabilities; and account for latency, slippage, liquidity, limits, and rejected fills.
+
+For production, use a licensed low-latency play-by-play provider as the authoritative game-state source. The public Polymarket sports feed explicitly may be delayed or incomplete.
