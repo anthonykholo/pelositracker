@@ -60,6 +60,7 @@
     .game[aria-disabled=true]{opacity:.5;cursor:wait}
     .game .g-title{font-size:12px;line-height:1.3}
     .game .g-league{margin-top:2px;color:var(--muted);font-family:var(--mono);font-size:9px;letter-spacing:.05em;text-transform:uppercase}
+    .game .g-live{color:var(--red);font-weight:700}
     .game .g-add{color:var(--cyan);font-family:var(--mono);font-size:10px;white-space:nowrap}
     .discover-empty{color:var(--faint);font-size:12px;font-family:var(--mono)}
   </style>
@@ -232,7 +233,7 @@
     if(!discoverGames.length){list.innerHTML='<div class="discover-empty">No live games found right now.</div>';return}
     const q=(document.querySelector("#discover-search").value||"").toLowerCase();
     const shown=discoverGames.filter(g=>!q||`${g.title} ${g.league||""}`.toLowerCase().includes(q));
-    list.innerHTML=shown.length?shown.map(g=>`<div class="game" data-slug="${esc(g.slug)}" role="button" tabindex="0" title="${esc(g.title)}"><div><div class="g-title">${esc(g.title)}</div><div class="g-league">${esc(g.league||"sports")}</div></div><span class="g-add">+ Monitor</span></div>`).join(""):'<div class="discover-empty">No games match.</div>';
+    list.innerHTML=shown.length?shown.map(g=>`<div class="game" data-slug="${esc(g.slug)}" role="button" tabindex="0" title="${esc(g.title)}"><div><div class="g-title">${esc(g.title)}</div><div class="g-league">${g.status==="live"?'<span class="g-live">● LIVE</span> ':""}${esc(g.league||"sports")}</div></div><span class="g-add">+ Monitor</span></div>`).join(""):'<div class="discover-empty">No games match.</div>';
   }
   async function loadDiscover() {
     const list=document.querySelector("#discover-list");

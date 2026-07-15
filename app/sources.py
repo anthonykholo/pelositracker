@@ -160,8 +160,9 @@ def _league_label(event: dict) -> str:
 
 
 def filter_sports_games(events: list[dict]) -> list[dict]:
-    """Keep tradeable sports GAMES (team-vs-team matchups); drop futures and
-    per-market sub-events. Pure so it can be unit-tested without the network."""
+    """Keep tradeable sports GAMES (team-vs-team matchups) that are accepting
+    orders right now; drop futures, sub-events, and finished/idle markets. Pure
+    so it can be unit-tested without the network."""
     games = []
     for event in events:
         title = str(event.get("title", ""))
@@ -169,30 +170,96 @@ def filter_sports_games(events: list[dict]) -> list[dict]:
             continue
         if not event.get("enableOrderBook", False) or not _is_sports_event(event):
             continue
+        markets = event.get("markets") or []
+        if not any(m.get("acceptingOrders") for m in markets):  # tradeable now
+            continue
         slug = event.get("slug")
         if not slug:
             continue
+        # Real first-pitch/tip time lives on the market (top-level startDate is
+        # just when the market was created).
+        game_start = next((m.get("gameStartTime") for m in markets if m.get("gameStartTime")), None)
         games.append({
             "slug": slug,
             "title": title,
             "league": _league_label(event),
-            "start_date": event.get("startDate"),
-            "volume24hr": event.get("volume24hr"),
+            "game_start": game_start,
             "restricted": bool(event.get("restricted", False)),
         })
     return games
 
 
-async def polymarket_sports_events(limit: int = 200) -> list[dict]:
-    """List currently-tradeable Polymarket sports games for in-site discovery."""
+# Per-league tag slugs, queried individually so a high-volume league (e.g.
+# tennis has hundreds of daily matches) can't crowd others out of a single
+# volume/date-ordered page. Override with DISCOVER_LEAGUES (comma-separated).
+_DEFAULT_LEAGUES = ("mlb", "nba", "wnba", "nfl", "nhl", "mls", "epl",
+                    "ufc", "tennis", "golf", "boxing", "nascar")
+
+
+def _parse_iso(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _game_window(games: list[dict], now: datetime) -> list[dict]:
+    """Tag live/upcoming by real game time; keep in-progress + upcoming, drop
+    games that finished hours ago. Live sorted first, then soonest."""
+    out = []
+    for game in games:
+        start = _parse_iso(game.get("game_start"))
+        if start is None:
+            game["status"] = "upcoming"     # unknown time: show, don't guess live
+            out.append(game)
+            continue
+        hours = (now - start).total_seconds() / 3600.0
+        if 0 <= hours <= 5:                 # in progress (typical game length)
+            game["status"] = "live"
+        elif -168 <= hours < 0:             # starts within the next 7 days
+            game["status"] = "upcoming"
+        else:
+            continue                         # finished >5h ago, or >7d out
+        out.append(game)
+    out.sort(key=lambda g: (g["status"] != "live", _parse_iso(g.get("game_start")) or now))
+    return out
+
+
+async def polymarket_sports_events(limit_per_league: int = 100) -> list[dict]:
+    """List live/upcoming Polymarket sports games across leagues for discovery.
+
+    Gamma can't order by real game time, so per league we pull both creation
+    orderings (ascending surfaces soonest/in-progress games, descending the
+    freshly-listed ones) and then sort/filter by the market's gameStartTime.
+    """
+    leagues = [s.strip() for s in os.getenv("DISCOVER_LEAGUES", "").split(",") if s.strip()] \
+        or list(_DEFAULT_LEAGUES)
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            "https://gamma-api.polymarket.com/events",
-            params={"closed": "false", "active": "true", "limit": str(limit),
-                    "order": "volume24hr", "ascending": "false"},
-        )
-        response.raise_for_status()
-        return filter_sports_games(response.json())
+        async def league_events(slug: str, ascending: bool) -> list[dict]:
+            try:
+                response = await client.get(
+                    "https://gamma-api.polymarket.com/events",
+                    params={"closed": "false", "active": "true", "limit": str(limit_per_league),
+                            "tag_slug": slug, "order": "startDate",
+                            "ascending": "true" if ascending else "false"},
+                )
+                response.raise_for_status()
+                return response.json()
+            except Exception:
+                return []  # a bad/off-season slug shouldn't sink the whole list
+        tasks = [league_events(slug, asc) for slug in leagues for asc in (True, False)]
+        batches = await asyncio.gather(*tasks)
+    seen_events: set[str] = set()
+    events = []
+    for event in (e for batch in batches for e in batch):
+        key = str(event.get("id") or event.get("slug"))
+        if key not in seen_events:
+            seen_events.add(key)
+            events.append(event)
+    ranked = _game_window(filter_sports_games(events), datetime.now(timezone.utc))
+    return ranked[:80]  # live first, then soonest — keep the picker manageable
 
 
 async def match_odds_api_event(sport_key: str | None, title: str) -> dict | None:
