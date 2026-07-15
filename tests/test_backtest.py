@@ -106,6 +106,13 @@ def test_empty_winner_set_settles_nothing(tmp_path):
         ledger.close()
 
 
+def test_watch_page_serves():
+    with TestClient(app) as client:
+        response = client.get("/watch")
+        assert response.status_code == 200
+        assert "stream-url" in response.text and "Where to watch" in response.text
+
+
 def test_metrics_endpoint_is_available():
     with TestClient(app) as client:
         response = client.get("/api/metrics")

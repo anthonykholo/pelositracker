@@ -12,8 +12,8 @@ manifest-path = "native_engine/Cargo.toml"
 python-source = "."
 module-name = "app._native_engine"
 features = ["extension-module"]
-# Ship the dashboard with the wheel so it serves on a fresh host.
-include = ["app/static/index.html"]
+# Ship the dashboard + watch page with the wheel so they serve on a fresh host.
+include = ["app/static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

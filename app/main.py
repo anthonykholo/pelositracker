@@ -174,6 +174,11 @@ async def index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+@app.get("/watch")
+async def watch():
+    return FileResponse(Path(__file__).parent / "static" / "watch.html")
+
+
 @app.get("/api/config")
 async def config():
     return {"confidence_threshold": engine.confidence_threshold, "edge_threshold": engine.edge_threshold,
