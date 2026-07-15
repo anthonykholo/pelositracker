@@ -57,6 +57,8 @@ class Event:
     away: str
     league: str = ""
     polymarket_slug: str | None = None
+    polymarket_url: str | None = None
+    polymarket_restricted: bool = False
     odds_api_sport: str | None = None
     odds_api_event_id: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
@@ -88,6 +90,15 @@ class Quote:
     bid: float | None = None
     ask: float | None = None
     liquidity: float | None = None
+    market_liquidity: float | None = None
+    token_id: str | None = None
+    market_slug: str | None = None
+    question: str | None = None
+    bid_size: float | None = None
+    ask_size: float | None = None
+    min_order_size: float | None = None
+    tick_size: float | None = None
+    accepting_orders: bool = True
 
     @property
     def executable_probability(self) -> float:

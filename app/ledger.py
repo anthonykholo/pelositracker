@@ -53,6 +53,17 @@ CREATE TABLE IF NOT EXISTS closing_lines (
     closing_ts        REAL NOT NULL,
     UNIQUE(event_id, market, outcome)
 );
+CREATE TABLE IF NOT EXISTS positions (
+    event_id        TEXT NOT NULL,
+    token_id        TEXT NOT NULL,
+    market          TEXT NOT NULL,
+    outcome         TEXT NOT NULL,
+    shares          REAL NOT NULL,
+    avg_entry_price REAL NOT NULL,
+    created_ts      REAL NOT NULL,
+    updated_ts      REAL NOT NULL,
+    PRIMARY KEY(event_id, token_id)
+);
 """
 
 _MONEYLINE_MARKETS = {"moneyline", "h2h", "winner"}
@@ -161,3 +172,41 @@ class Ledger:
                     "SELECT * FROM bets WHERE event_id=? ORDER BY entry_ts", (event_id,)
                 )
             ]
+
+    def upsert_position(self, event_id: str, token_id: str, market: str, outcome: str,
+                        shares: float, avg_entry_price: float) -> dict:
+        now = _now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO positions
+                   (event_id, token_id, market, outcome, shares, avg_entry_price, created_ts, updated_ts)
+                   VALUES (?,?,?,?,?,?,?,?)
+                   ON CONFLICT(event_id, token_id) DO UPDATE SET
+                     market=excluded.market, outcome=excluded.outcome, shares=excluded.shares,
+                     avg_entry_price=excluded.avg_entry_price, updated_ts=excluded.updated_ts""",
+                (event_id, token_id, market, outcome, shares, avg_entry_price, now, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM positions WHERE event_id=? AND token_id=?", (event_id, token_id)
+            ).fetchone()
+            return dict(row)
+
+    def event_positions(self, event_id: str) -> list[dict]:
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(
+                "SELECT * FROM positions WHERE event_id=? ORDER BY updated_ts DESC", (event_id,)
+            )]
+
+    def delete_position(self, event_id: str, token_id: str) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM positions WHERE event_id=? AND token_id=?", (event_id, token_id)
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_event_positions(self, event_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM positions WHERE event_id=?", (event_id,))
+            self._conn.commit()

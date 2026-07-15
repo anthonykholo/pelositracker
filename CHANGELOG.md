@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 — URL-first markets and paper positions
+
+- Added full Polymarket event-link registration, including mobile share links.
+- Automatically infers event metadata and attempts a quota-free The Odds API event match.
+- Shows only active, order-accepting selections with an executable Polymarket ask.
+- Added initial CLOB order-book snapshots, live depth, spread, liquidity, minimum size, and tick metadata.
+- Added entry price ceilings, margin-to-ceiling guidance, and execution/data risk flags.
+- Added durable user-entered paper positions with cash-out value, P/L, remaining hold edge, and explainable `HOLD`, `CONSIDER CASH`, or `EXIT WATCH` statuses.
+- Preserved the market-relative Rust engine, cyberpunk HUD, and durable CLV/calibration truth loop.
+
 ## 0.3.2 — The Odds API V4
 
 - Corrected authentication and request paths for The Odds API V4.

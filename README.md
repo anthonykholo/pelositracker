@@ -7,12 +7,15 @@ A paper-only live sports market monitor with a Rust scoring engine and a FastAPI
 ## Features
 
 - Public Polymarket market and sports WebSocket streams.
+- Paste a complete Polymarket event or mobile share link; no manual slug is required.
+- Actionable-only selection view based on accepting-orders status and executable asks.
 - Optional multi-sportsbook polling through TheOddsAPI.
 - Rust-native consensus, momentum, freshness, spread, edge, and confidence calculations.
 - Paper-signal safety gates with plain-language explanations.
 - Responsive dashboard with persistent explanation panels.
 - Event removal that cancels feed tasks and clears in-memory event data.
 - Credential-free simulation mode for testing the complete pipeline.
+- Durable paper positions with entry price, shares, cash-out value, P/L, and explainable hold/cash monitoring.
 
 ## Quick start on Windows
 
@@ -48,6 +51,24 @@ The Polymarket public feeds do not require a key. The Odds API integration remai
 
 ## Registering an event
 
+The dashboard only needs a Polymarket event link:
+
+```text
+https://polymarket.com/event/example-event-slug
+```
+
+The app resolves the slug, event title, active markets, CLOB tokens, order books, and—when possible—the matching The Odds API event. It lists only selections currently accepting orders with an executable ask. Public market visibility does not imply that trading is available or legal for every user or location.
+
+The API also accepts URL-first registration:
+
+```json
+{
+  "polymarket_url": "https://polymarket.com/event/example-event-slug"
+}
+```
+
+The older manual fields remain available through `POST /api/events` when needed.
+
 Use the dashboard or `POST /api/events`:
 
 ```json
@@ -73,6 +94,9 @@ For The Odds API, get valid sport keys from `GET /v4/sports` and event IDs from 
 - **Model probability**: consensus probability plus a deliberately capped recent-scoring adjustment.
 - **Estimated edge**: model probability minus the best executable market probability.
 - **Signal quality**: a 0–100 quality score based on freshness, source agreement/count, spread, and edge strength—not a win probability.
+- **Entry ceiling**: model fair probability minus the configured minimum edge. An ask below the ceiling has enough modeled margin to pass that gate.
+- **HOLD / CONSIDER CASH / EXIT WATCH**: paper-position heuristics using the executable bid, spread, P/L, model fair value, remaining edge, and data quality. They are not personalized financial advice or guaranteed outcomes.
+- **Cash value**: shares multiplied by the current best bid, before fees, slippage, or failed fills.
 
 ## Architecture
 
@@ -97,6 +121,6 @@ cargo test --manifest-path native_engine\Cargo.toml
 
 ## Model limitations
 
-The current momentum component is a transparent capped heuristic, not a trained sport-specific model. Before considering real-money use, train and walk-forward test by sport, league, market, and game phase; calibrate probabilities; and account for latency, slippage, liquidity, limits, and rejected fills.
+The entry and exit statuses are transparent heuristics, not a trained sport-specific model or instruction to trade. Before considering real-money use, train and walk-forward test by sport, league, market, and game phase; calibrate probabilities; and account for latency, slippage, liquidity, limits, fees, rules, suspended books, and rejected fills.
 
 For production, use a licensed low-latency play-by-play provider as the authoritative game-state source. The public Polymarket sports feed explicitly may be delayed or incomplete.

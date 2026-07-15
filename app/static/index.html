@@ -3,546 +3,198 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Paper-only live sports market signal monitor">
+  <meta name="description" content="Paper-only Polymarket entry and position monitor">
   <title>Live Edge Monitor</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #07080a;
-      --bg-2: #0b0d11;
-      --panel: #0c0f13;
-      --panel-2: #12171f;
-      --line: #1d2530;
-      --line-bright: #2b3947;
-      --text: #e9efe8;
-      --muted: #78878a;
-      --faint: #47535c;
-      --accent: #ff4d2e;      /* Marathon coral */
-      --accent-dim: #b8371f;
-      --cyan: #29e7d6;
-      --yes: #29e7d6;         /* cyan = signal go */
-      --no: #ff4d2e;          /* coral = signal warn */
-      --warn: #ffcf3f;        /* acid yellow */
-      --radius: 2px;
-      --mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "Segoe UI Mono", Consolas, monospace;
-      --sans: "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --bg:#07080a; --panel:#0c0f13; --panel2:#12171f; --line:#1d2530; --bright:#2b3947;
+      --text:#e9efe8; --muted:#829094; --faint:#4d5961; --coral:#ff4d2e; --cyan:#29e7d6;
+      --yellow:#ffcf3f; --red:#ff6b5f; --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+      --sans:"Segoe UI",system-ui,-apple-system,sans-serif;
     }
-
-    * { box-sizing: border-box; }
-    html { -webkit-text-size-adjust: 100%; }
-    body {
-      margin: 0;
-      background:
-        radial-gradient(120% 80% at 85% -10%, rgba(255, 77, 46, .10), transparent 55%),
-        radial-gradient(90% 70% at 0% 0%, rgba(41, 231, 214, .06), transparent 50%),
-        linear-gradient(180deg, var(--bg-2), var(--bg));
-      background-attachment: fixed;
-      color: var(--text);
-      font: 14px/1.5 var(--sans);
-      letter-spacing: .01em;
-    }
-    /* scanline / CRT overlay */
-    body::after {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 9;
-      background: repeating-linear-gradient(0deg, rgba(0, 0, 0, .16) 0, rgba(0, 0, 0, .16) 1px, transparent 2px, transparent 3px);
-      mix-blend-mode: multiply;
-      opacity: .5;
-    }
-    button, input { font: inherit; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 26px 20px 72px; position: relative; z-index: 1; }
-
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      padding-bottom: 18px;
-      margin-bottom: 26px;
-      border-bottom: 1px solid var(--line);
-    }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .live-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      background: var(--cyan);
-      box-shadow: 0 0 0 3px rgba(41, 231, 214, .15), 0 0 12px var(--cyan);
-      animation: pulse 1.6s ease-in-out infinite;
-    }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-    h1 {
-      margin: 0;
-      font-family: var(--mono);
-      font-size: 17px;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-    }
-    .brand small { display: block; margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
-    .config {
-      color: var(--cyan);
-      font-family: var(--mono);
-      font-size: 11px;
-      letter-spacing: .05em;
-      text-transform: uppercase;
-      border: 1px solid var(--line-bright);
-      padding: 7px 13px;
-      white-space: nowrap;
-      background: rgba(41, 231, 214, .04);
-    }
-
-    .grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
-
-    /* HUD frame: opposing corner brackets */
-    .panel, .event, .config, .empty {
-      position: relative;
-      background: linear-gradient(180deg, rgba(255, 255, 255, .015), transparent), var(--panel);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-    }
-    .panel::before, .panel::after,
-    .event::before, .event::after {
-      content: "";
-      position: absolute;
-      width: 13px;
-      height: 13px;
-      pointer-events: none;
-      border: 1px solid var(--accent);
-    }
-    .panel::before, .event::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
-    .panel::after, .event::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
-    .panel-pad { padding: 18px; }
-    .section-title {
-      margin: 0 0 14px;
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .16em;
-      text-transform: uppercase;
-    }
-    .section-title::before { content: "// "; color: var(--accent); }
-
-    label { display: block; color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; margin: 14px 0 5px; }
-    label:first-of-type { margin-top: 0; }
-    .optional { color: var(--faint); text-transform: none; }
-    input {
-      width: 100%;
-      padding: 9px 11px;
-      color: var(--text);
-      background: var(--bg);
-      border: 1px solid var(--line-bright);
-      border-radius: 0;
-      font-family: var(--mono);
-      font-size: 13px;
-      transition: border-color .15s, box-shadow .15s;
-    }
-    input::placeholder { color: var(--faint); }
-    input:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan), 0 0 14px rgba(41, 231, 214, .25); }
-    button {
-      border: 0;
-      border-radius: 0;
-      font-family: var(--mono);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .1em;
-      text-transform: uppercase;
-      padding: 11px 14px;
-      cursor: pointer;
-      transition: opacity .15s, background .15s, border-color .15s, box-shadow .15s, color .15s;
-    }
-    button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
-    button:disabled { opacity: .55; cursor: wait; }
-    .btn-primary {
-      width: 100%; margin-top: 18px; color: #0a0605; background: var(--accent);
-      clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
-    }
-    .btn-primary:hover { background: #ff6244; box-shadow: 0 0 18px rgba(255, 77, 46, .45); }
-    .btn-ghost { width: 100%; margin-top: 10px; color: var(--cyan); background: transparent; border: 1px solid var(--line-bright); }
-    .btn-ghost:hover { border-color: var(--cyan); box-shadow: inset 0 0 12px rgba(41, 231, 214, .1); }
-    .note { margin: 16px 0 0; padding-top: 14px; border-top: 1px dashed var(--line); color: var(--faint); font-size: 11px; line-height: 1.55; }
-
-    .stack { display: flex; flex-direction: column; gap: 16px; }
-    .event { overflow: hidden; }
-    .event-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding: 15px 18px;
-      background: rgba(255, 255, 255, .015);
-      border-bottom: 1px solid var(--line);
-    }
-    .event-head .name { font-family: var(--mono); font-size: 14px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-    .event-head .meta { margin-top: 3px; color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
-    .event-actions { display: flex; align-items: center; gap: 14px; }
-    .score {
-      font-family: var(--mono);
-      font-size: 24px;
-      font-weight: 700;
-      letter-spacing: .02em;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-      text-shadow: 0 0 16px rgba(41, 231, 214, .25);
-    }
-    .score .sep { color: var(--accent); margin: 0 5px; }
-    .btn-remove { padding: 6px 10px; color: var(--no); background: transparent; border: 1px solid rgba(255, 77, 46, .4); font-size: 10px; }
-    .btn-remove:hover { background: rgba(255, 77, 46, .1); border-color: var(--accent); }
-
-    .markets { display: flex; flex-direction: column; }
-    .market { padding: 15px 18px; border-bottom: 1px solid var(--line); }
-    .market:last-child { border-bottom: 0; }
-    .market-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    .outcome { font-family: var(--mono); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-    .outcome small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-weight: 400; letter-spacing: .03em; }
-    .tag {
-      padding: 4px 11px;
-      font-family: var(--mono);
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: .12em;
-      text-transform: uppercase;
-      border: 1px solid currentColor;
-      clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
-    }
-    .tag.bet { color: var(--cyan); background: rgba(41, 231, 214, .1); text-shadow: 0 0 10px rgba(41, 231, 214, .5); }
-    .tag.watch { color: var(--warn); background: rgba(255, 207, 63, .08); }
-
-    .figs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
-    .fig { padding: 10px 12px; background: var(--panel-2); border-left: 2px solid var(--line-bright); }
-    .fig .key { color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
-    .fig .value { margin-top: 3px; font-family: var(--mono); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .fig .hint { margin-top: 2px; color: var(--faint); font-size: 10px; }
-    .value.positive { color: var(--cyan); }
-    .value.negative { color: var(--no); }
-    .denominator { color: var(--faint); font-size: 12px; }
-
-    .bar { height: 6px; margin-top: 14px; overflow: hidden; background: var(--panel-2); border: 1px solid var(--line); }
-    .bar i {
-      display: block;
-      height: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--cyan));
-      box-shadow: 0 0 10px rgba(41, 231, 214, .4);
-      transition: width .4s ease;
-    }
-    .why { margin-top: 13px; }
-    .why summary { color: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; list-style: none; }
-    .why summary::-webkit-details-marker { display: none; }
-    .why summary::before { content: "[+] "; color: var(--accent); }
-    .why[open] summary::before { content: "[-] "; }
-    .why ul { margin: 9px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
-    .why li { margin: 4px 0; }
-    .pending { padding: 15px 18px; color: var(--muted); font-family: var(--mono); font-size: 12px; letter-spacing: .04em; }
-    .empty { padding: 72px 20px; color: var(--muted); text-align: center; }
-    .empty b { display: block; margin-bottom: 6px; color: var(--text); font-family: var(--mono); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
-    .error { margin-bottom: 14px; padding: 10px 12px; color: #ffb4ae; background: rgba(255, 77, 46, .1); border: 1px solid rgba(255, 77, 46, .4); border-radius: 0; font-family: var(--mono); font-size: 12px; }
-    [hidden] { display: none !important; }
-
-    @media (max-width: 820px) {
-      .grid { grid-template-columns: 1fr; }
-      .figs { grid-template-columns: 1fr 1fr; }
-    }
-    @media (max-width: 520px) {
-      header, .event-head { align-items: flex-start; flex-direction: column; }
-      .event-actions { width: 100%; justify-content: space-between; }
-      .figs { grid-template-columns: 1fr; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .live-dot { animation: none; }
-      .bar i { transition: none; }
-    }
-
-    /* truth loop: CLV & calibration */
-    .metrics-panel { padding: 18px; margin-bottom: 20px; }
-    .metrics-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-    .metrics-head .section-title { margin: 0; }
-    .metrics-sub { color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
-    .metric-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; margin-top: 14px; }
-    .mtile { padding: 11px 13px; background: var(--panel-2); border-left: 2px solid var(--line-bright); }
-    .mtile .k { color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
-    .mtile .v { margin-top: 4px; font-family: var(--mono); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .mtile .v.good { color: var(--cyan); }
-    .mtile .v.bad { color: var(--no); }
-    .mtile .sub2 { margin-top: 2px; color: var(--faint); font-family: var(--mono); font-size: 10px; }
-    .metrics-empty { margin-top: 12px; color: var(--muted); font-family: var(--mono); font-size: 12px; letter-spacing: .03em; }
-    .reliability { display: flex; align-items: flex-end; gap: 6px; margin-top: 18px; flex-wrap: wrap; }
-    .rbin { display: flex; flex-direction: column; align-items: center; gap: 5px; }
-    .rtrack { position: relative; width: 26px; height: 60px; background: var(--panel-2); border: 1px solid var(--line); }
-    .remp { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(255, 77, 46, .55); }
-    .rpred { position: absolute; left: -1px; right: -1px; height: 2px; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
-    .rlabel { color: var(--faint); font-family: var(--mono); font-size: 9px; }
+    *{box-sizing:border-box} html{-webkit-text-size-adjust:100%} body{margin:0;color:var(--text);font:14px/1.5 var(--sans);
+      background:radial-gradient(100% 70% at 90% -10%,rgba(255,77,46,.1),transparent 55%),
+      radial-gradient(80% 70% at 0 0,rgba(41,231,214,.06),transparent 50%),linear-gradient(#0b0d11,var(--bg));
+      background-attachment:fixed} body:after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+      background:repeating-linear-gradient(0deg,rgba(0,0,0,.15) 0,rgba(0,0,0,.15) 1px,transparent 2px,transparent 3px)}
+    button,input{font:inherit}.wrap{max-width:1240px;margin:auto;padding:24px 18px 72px;position:relative;z-index:1}
+    header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:18px;margin-bottom:24px;border-bottom:1px solid var(--line)}
+    .brand{display:flex;align-items:center;gap:12px}.dot{width:9px;height:9px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);animation:pulse 1.6s infinite}
+    @keyframes pulse{50%{opacity:.35}}h1{margin:0;font:700 17px var(--mono);letter-spacing:.12em;text-transform:uppercase}.brand small{display:block;color:var(--muted);font:11px var(--mono);margin-top:4px}
+    .config{color:var(--cyan);font:11px var(--mono);letter-spacing:.05em;text-transform:uppercase;border:1px solid var(--bright);padding:7px 12px;background:rgba(41,231,214,.04)}
+    .grid{display:grid;grid-template-columns:330px 1fr;gap:20px;align-items:start}.panel,.event,.empty{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.015),transparent),var(--panel);border:1px solid var(--line)}
+    .panel:before,.event:before{content:"";position:absolute;top:-1px;left:-1px;width:13px;height:13px;border-left:1px solid var(--coral);border-top:1px solid var(--coral)}
+    .panel:after,.event:after{content:"";position:absolute;right:-1px;bottom:-1px;width:13px;height:13px;border-right:1px solid var(--coral);border-bottom:1px solid var(--coral)}
+    .pad{padding:18px}.title{margin:0 0 14px;color:var(--muted);font:700 12px var(--mono);letter-spacing:.16em;text-transform:uppercase}.title:before{content:"// ";color:var(--coral)}
+    label{display:block;margin:14px 0 5px;color:var(--muted);font:11px var(--mono);letter-spacing:.05em;text-transform:uppercase}label:first-of-type{margin-top:0}.optional{color:var(--faint);text-transform:none}
+    input{width:100%;padding:10px 11px;color:var(--text);background:var(--bg);border:1px solid var(--bright);border-radius:0;font:13px var(--mono)}input::placeholder{color:var(--faint)}input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 1px var(--cyan)}
+    button{border:0;border-radius:0;padding:10px 13px;cursor:pointer;font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase}button:disabled{opacity:.55;cursor:wait}button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+    .primary{width:100%;margin-top:16px;color:#080504;background:var(--coral);clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}.primary:hover{background:#ff674b}
+    .ghost{width:100%;margin-top:10px;color:var(--cyan);background:transparent;border:1px solid var(--bright)}.ghost:hover{border-color:var(--cyan)}
+    .advanced{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px}.advanced summary,.why summary{cursor:pointer;color:var(--muted);font:11px var(--mono);text-transform:uppercase;list-style:none}.advanced summary:before,.why summary:before{content:"[+] ";color:var(--coral)}.advanced[open] summary:before,.why[open] summary:before{content:"[-] "}
+    .note{margin:16px 0 0;padding-top:13px;border-top:1px dashed var(--line);color:var(--faint);font-size:11px}.error{margin-bottom:12px;padding:9px 11px;color:#ffc0bb;background:rgba(255,77,46,.1);border:1px solid rgba(255,77,46,.45);font:12px var(--mono)}[hidden]{display:none!important}
+    .stack{display:flex;flex-direction:column;gap:16px}.event{overflow:hidden}.event-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.015)}
+    .name{font:700 14px var(--mono);letter-spacing:.04em;text-transform:uppercase}.meta{margin-top:3px;color:var(--muted);font:11px var(--mono)}.meta a{color:var(--cyan);text-decoration:none}.event-actions{display:flex;align-items:center;gap:12px}.score{font:700 23px var(--mono);white-space:nowrap}.sep{color:var(--coral);margin:0 4px}.remove,.position-remove{padding:6px 9px;color:var(--red);background:transparent;border:1px solid rgba(255,77,46,.45);font-size:10px}
+    .notice{padding:10px 18px;color:var(--muted);background:rgba(255,207,63,.04);border-bottom:1px solid var(--line);font-size:11px}.notice strong{color:var(--yellow)}
+    .section-strip{padding:9px 18px;color:var(--muted);background:var(--bg);border-bottom:1px solid var(--line);font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}.section-strip span{color:var(--cyan)}
+    .market,.position{padding:16px 18px;border-bottom:1px solid var(--line)}.market:last-child,.position:last-child{border-bottom:0}.market-top,.position-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.outcome{font:700 13px var(--mono);text-transform:uppercase}.outcome small{display:block;margin-top:3px;color:var(--muted);font:400 11px var(--mono);text-transform:none}
+    .tag{padding:4px 9px;border:1px solid currentColor;font:700 10px var(--mono);letter-spacing:.08em;white-space:nowrap}.entry,.hold{color:var(--cyan);background:rgba(41,231,214,.09)}.wait,.monitor{color:var(--yellow);background:rgba(255,207,63,.07)}.cash,.exit{color:var(--red);background:rgba(255,77,46,.09)}.marketonly{color:var(--muted)}
+    .figs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:13px}.fig{padding:9px 10px;background:var(--panel2);border-left:2px solid var(--bright)}.key{color:var(--muted);font:10px var(--mono);text-transform:uppercase}.value{margin-top:3px;font:700 17px var(--mono);font-variant-numeric:tabular-nums}.hint{margin-top:2px;color:var(--faint);font-size:10px}.positive{color:var(--cyan)}.negative{color:var(--red)}
+    .guide{margin-top:12px;padding:10px 11px;background:rgba(41,231,214,.035);border:1px solid var(--line);font-size:12px}.guide strong{color:var(--cyan);font-family:var(--mono)}
+    .why{margin-top:11px}.why ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:12px}.why li{margin:4px 0}.risk{color:#d8c88d!important}
+    .position-form{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;margin-top:11px;padding:11px;background:var(--panel2);border:1px solid var(--line)}.position-form label{margin:0 0 4px}.position-form button{height:38px;color:#06100f;background:var(--cyan)}
+    .portfolio{background:rgba(41,231,214,.025)}.pnl{font-weight:700}.pending{padding:18px;color:var(--muted);font:12px var(--mono)}.empty{padding:70px 20px;text-align:center;color:var(--muted)}.empty b{display:block;color:var(--text);font:700 14px var(--mono);text-transform:uppercase;margin-bottom:6px}
+    .metrics-panel{padding:18px;margin-bottom:20px}.metrics-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}.metrics-head .title{margin:0}.metrics-sub{color:var(--faint);font:11px var(--mono)}.metric-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;margin-top:14px}.mtile{padding:10px 12px;background:var(--panel2);border-left:2px solid var(--bright)}.mtile .k{color:var(--muted);font:10px var(--mono);text-transform:uppercase}.mtile .v{margin-top:4px;font:700 19px var(--mono)}.mtile .v.good{color:var(--cyan)}.mtile .v.bad{color:var(--red)}.mtile .sub2{color:var(--faint);font:10px var(--mono)}.metrics-empty{margin-top:12px;color:var(--muted);font:12px var(--mono)}.reliability{display:flex;align-items:flex-end;gap:6px;margin-top:16px;flex-wrap:wrap}.rbin{display:flex;flex-direction:column;align-items:center;gap:4px}.rtrack{position:relative;width:26px;height:58px;background:var(--panel2);border:1px solid var(--line)}.remp{position:absolute;left:0;right:0;bottom:0;background:rgba(255,77,46,.55)}.rpred{position:absolute;left:-1px;right:-1px;height:2px;background:var(--cyan)}.rlabel{color:var(--faint);font:9px var(--mono)}
+    @media(max-width:960px){.grid{grid-template-columns:1fr}.figs{grid-template-columns:1fr 1fr}.panel{position:static}}
+    @media(max-width:560px){.wrap{padding:14px 10px 50px}header,.event-head{align-items:flex-start;flex-direction:column}.event-actions{width:100%;justify-content:space-between}.figs{grid-template-columns:1fr 1fr}.position-form{grid-template-columns:1fr}.market-top,.position-top{align-items:flex-start}.config{white-space:normal}}
+    @media(prefers-reduced-motion:reduce){.dot{animation:none}}
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <header>
-      <div class="brand">
-        <span class="live-dot" aria-hidden="true"></span>
-        <div>
-          <h1>Live Edge Monitor</h1>
-          <small>Paper signals only · never places a wager</small>
-        </div>
-      </div>
-      <div class="config" id="config">Loading thresholds…</div>
-    </header>
-
-    <section class="panel metrics-panel" id="metrics" aria-labelledby="metrics-heading">
-      <div class="metrics-head">
-        <h2 class="section-title" id="metrics-heading">Truth loop · CLV &amp; calibration</h2>
-        <span class="metrics-sub" id="metrics-sub"></span>
-      </div>
-      <div id="metrics-body" aria-live="polite"></div>
-    </section>
-
-    <div class="grid">
-      <aside class="panel panel-pad">
-        <h2 class="section-title">Register event</h2>
-        <div class="error" id="form-error" role="alert" hidden></div>
-        <form id="form">
-          <label for="event-name">Event name</label>
-          <input id="event-name" name="name" required placeholder="Knicks vs Celtics">
-          <label for="sport">Sport</label>
-          <input id="sport" name="sport" required placeholder="basketball">
-          <label for="home">Home team</label>
-          <input id="home" name="home" required>
-          <label for="away">Away team</label>
-          <input id="away" name="away" required>
-          <label for="polymarket-slug">Polymarket slug <span class="optional">(optional)</span></label>
-          <input id="polymarket-slug" name="polymarket_slug" placeholder="nba-nyk-bos-2026-…">
-          <label for="odds-sport">TheOddsAPI sport key <span class="optional">(optional)</span></label>
+<main class="wrap">
+  <header>
+    <div class="brand"><span class="dot" aria-hidden="true"></span><div><h1>Live Edge Monitor</h1><small>Paper-only entry and position guidance · never places a trade</small></div></div>
+    <div class="config" id="config">Loading thresholds…</div>
+  </header>
+  <section class="panel metrics-panel" aria-labelledby="metrics-heading">
+    <div class="metrics-head"><h2 class="title" id="metrics-heading">Truth loop · CLV &amp; calibration</h2><span class="metrics-sub" id="metrics-sub"></span></div>
+    <div id="metrics-body" aria-live="polite"></div>
+  </section>
+  <div class="grid">
+    <aside class="panel pad">
+      <h2 class="title">Paste Polymarket link</h2>
+      <div class="error" id="form-error" role="alert" hidden></div>
+      <form id="form">
+        <label for="polymarket-url">Event link</label>
+        <input id="polymarket-url" name="polymarket_url" type="url" required placeholder="https://polymarket.com/event/…" autocomplete="url">
+        <details class="advanced">
+          <summary>Optional sportsbook match</summary>
+          <label for="odds-sport">The Odds API sport key <span class="optional">(usually automatic)</span></label>
           <input id="odds-sport" name="odds_api_sport" placeholder="basketball_nba">
-          <label for="odds-event">TheOddsAPI event ID <span class="optional">(optional)</span></label>
+          <label for="odds-event">The Odds API event ID <span class="optional">(optional)</span></label>
           <input id="odds-event" name="odds_api_event_id">
-          <button class="btn-primary" id="submit-event" type="submit">Start monitoring</button>
-        </form>
-        <button class="btn-ghost" id="demo" type="button">Launch live demo</button>
-        <p class="note">Research software, not financial advice. Signal quality is a data-quality score, not a predicted win rate.</p>
-      </aside>
-
-      <section aria-labelledby="events-heading">
-        <h2 class="section-title" id="events-heading">Monitored events</h2>
-        <div id="events" aria-live="polite"></div>
-      </section>
-    </div>
-  </main>
-
-  <script>
-    const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
-    })[character]);
-    const pct = value => `${(value * 100).toFixed(1)}%`;
-    const signedPct = value => `${value >= 0 ? "+" : ""}${pct(value)}`;
-    const detailKey = (eventId, signal) => encodeURIComponent(`${eventId}|${signal.market}|${signal.outcome}`);
-    let refreshInFlight = false;
-
-    function marketRow(eventId, signal, openDetails) {
-      const paperBet = signal.action === "PAPER_BET";
-      const key = detailKey(eventId, signal);
-      const quality = Math.max(0, Math.min(100, signal.confidence));
-      return `<div class="market">
-        <div class="market-top">
-          <div class="outcome">${esc(signal.outcome)}<small>${esc(signal.market)}</small></div>
-          <span class="tag ${paperBet ? "bet" : "watch"}">${esc(signal.action.replace("_", " "))}</span>
-        </div>
-        <div class="figs">
-          <div class="fig" title="The engine's estimated probability that this outcome wins">
-            <div class="key">Model probability</div>
-            <div class="value">${pct(signal.model_probability)}</div>
-            <div class="hint">${signal.model_live_prob != null ? `Live model ${pct(signal.model_live_prob)}` : "Estimated chance"}</div>
-          </div>
-          <div class="fig" title="Model probability minus the best executable market probability">
-            <div class="key">Estimated edge</div>
-            <div class="value ${signal.edge >= 0 ? "positive" : "negative"}">${signedPct(signal.edge)}</div>
-            <div class="hint">Model minus market</div>
-          </div>
-          <div class="fig" title="Freshness, source agreement/count, spread, and edge strength">
-            <div class="key">Signal quality</div>
-            <div class="value">${signal.confidence.toFixed(0)}<span class="denominator">/100</span></div>
-            <div class="hint">Not a win probability</div>
-          </div>
-        </div>
-        <div class="bar" aria-label="Signal quality ${signal.confidence.toFixed(0)} out of 100"><i style="width:${quality}%"></i></div>
-        <details class="why" data-detail-key="${key}"${openDetails.has(key) ? " open" : ""}>
-          <summary>Why this signal?</summary>
-          <ul>${signal.reasons.map(reason => `<li>${esc(reason)}</li>`).join("")}</ul>
         </details>
-      </div>`;
-    }
+        <button class="primary" id="submit-event" type="submit">Monitor actionable markets</button>
+      </form>
+      <button class="ghost" id="demo" type="button">Launch paper demo</button>
+      <p class="note">Only markets accepting orders with an executable ask are shown. Availability and legality vary by location. Entry, hold, and cash guidance is heuristic research output—not a guarantee or instruction to wager.</p>
+    </aside>
+    <section aria-labelledby="events-heading">
+      <h2 class="title" id="events-heading">Monitored events</h2>
+      <div class="error" id="action-error" role="alert" hidden></div>
+      <div id="events" aria-live="polite"></div>
+    </section>
+  </div>
+</main>
+<script>
+  const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);
+  const pct = value => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+  const cents = value => value == null ? "—" : `${(value * 100).toFixed(1)}¢`;
+  const signedCents = value => value == null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}¢`;
+  const money = value => value == null ? "—" : `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
+  const keyFor = (...parts) => encodeURIComponent(parts.join("|"));
+  let refreshInFlight = false;
 
-    function eventCard({ event, latest_state: state, signals }, openDetails) {
-      const score = state
-        ? `${state.home_score}<span class="sep">–</span>${state.away_score}`
-        : "—";
-      const markets = signals.slice(0, 3).map(signal => marketRow(event.id, signal, openDetails)).join("");
-      return `<article class="event" data-event-id="${esc(event.id)}">
-        <div class="event-head">
-          <div>
-            <div class="name">${esc(event.name)}</div>
-            <div class="meta">${esc(event.sport)} · ${esc(state?.period || "waiting")} ${esc(state?.clock || "")}</div>
-          </div>
-          <div class="event-actions">
-            <div class="score">${score}</div>
-            <button class="btn-remove" type="button" data-remove-event="${esc(event.id)}" aria-label="Remove ${esc(event.name)}">Remove</button>
-          </div>
-        </div>
-        <div class="markets">${markets || '<div class="pending">Waiting for enough market data…</div>'}</div>
-      </article>`;
-    }
+  function tagClass(action) {
+    if (action === "ENTRY WINDOW") return "entry";
+    if (action === "HOLD") return "hold";
+    if (action === "CONSIDER CASH") return "cash";
+    if (action === "EXIT WATCH") return "exit";
+    if (action === "MARKET ONLY") return "marketonly";
+    return "wait";
+  }
 
-    async function refresh() {
-      if (refreshInFlight) return;
-      refreshInFlight = true;
-      const root = document.querySelector("#events");
-      const openDetails = new Set(
-        [...root.querySelectorAll("details[open][data-detail-key]")].map(detail => detail.dataset.detailKey)
-      );
-      try {
-        const response = await fetch("/api/events");
-        if (!response.ok) throw new Error(`Event refresh failed (${response.status})`);
-        const events = await response.json();
-        root.innerHTML = events.length
-          ? `<div class="stack">${events.map(event => eventCard(event, openDetails)).join("")}</div>`
-          : '<div class="panel empty"><b>No events yet</b>Launch the demo or register an event to begin monitoring.</div>';
-      } catch (error) {
-        if (!root.children.length) {
-          root.innerHTML = '<div class="panel empty"><b>Dashboard disconnected</b>Check that the server is still running.</div>';
-        }
-      } finally {
-        refreshInFlight = false;
-      }
-    }
+  function marketRow(eventId, market, openDetails) {
+    const detailKey = keyFor("market", eventId, market.token_id);
+    const modelClass = market.entry_margin == null ? "" : market.entry_margin >= 0 ? "positive" : "negative";
+    const guide = market.price_ceiling == null
+      ? "Add a matching sportsbook event to calculate a validated entry ceiling."
+      : market.room_to_ceiling >= 0
+        ? `<strong>Entry ceiling ${cents(market.price_ceiling)}</strong> · current ask is ${signedCents(-market.room_to_ceiling)} from the ceiling.`
+        : `<strong>Wait for ${cents(market.price_ceiling)} or lower</strong> · current ask is ${signedCents(-market.room_to_ceiling)} too expensive.`;
+    const risks = market.risk_flags.length ? market.risk_flags : ["No elevated execution flags detected; continue watching price and news latency."];
+    return `<div class="market" data-token-id="${esc(market.token_id)}">
+      <div class="market-top"><div class="outcome">${esc(market.outcome)}<small>${esc(market.question)}</small></div><span class="tag ${tagClass(market.entry_action)}">${esc(market.entry_action)}</span></div>
+      <div class="figs">
+        <div class="fig"><div class="key">Buy now</div><div class="value">${cents(market.buy_price)}</div><div class="hint">Executable ask</div></div>
+        <div class="fig"><div class="key">Sell now</div><div class="value">${cents(market.sell_price)}</div><div class="hint">Executable bid</div></div>
+        <div class="fig"><div class="key">Entry margin</div><div class="value ${modelClass}">${signedCents(market.entry_margin)}</div><div class="hint">Model fair minus ask</div></div>
+        <div class="fig"><div class="key">Signal quality</div><div class="value">${market.confidence == null ? "—" : market.confidence.toFixed(0)+"/100"}</div><div class="hint">${market.reference_sources} reference source(s)</div></div>
+      </div>
+      <div class="guide">${guide}${market.model_live_prob == null ? "" : ` Independent live win model ${pct(market.model_live_prob)}.`} Spread ${cents(market.spread)} · ask depth ${market.ask_size == null ? "—" : market.ask_size.toFixed(1)+" shares"} · market liquidity ${market.market_liquidity == null ? "—" : "$"+Number(market.market_liquidity).toLocaleString(undefined,{maximumFractionDigits:0})}.</div>
+      <details class="why" data-detail-key="${detailKey}"${openDetails.has(detailKey) ? " open" : ""}><summary>What to look out for</summary>
+        <ul>${market.reasons.map(reason => `<li>${esc(reason)}</li>`).join("")}${risks.map(risk => `<li class="risk">${esc(risk)}</li>`).join("")}</ul></details>
+      <details class="why"><summary>Add or update my position</summary>
+        <form class="position-form" data-save-position data-event-id="${esc(eventId)}" data-token-id="${esc(market.token_id)}" data-market="${esc(market.market)}" data-outcome="${esc(market.outcome)}">
+          <div><label>Shares</label><input name="shares" type="number" min="0.01" max="1000000" step="0.01" required placeholder="25"></div>
+          <div><label>Average entry (cents)</label><input name="entry_cents" type="number" min="0.1" max="99.9" step="0.1" required placeholder="52.5"></div>
+          <button type="submit">Save position</button>
+        </form>
+      </details>
+    </div>`;
+  }
 
-    document.querySelector("#form").addEventListener("submit", async event => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const submit = document.querySelector("#submit-event");
-      const errorBox = document.querySelector("#form-error");
-      const payload = Object.fromEntries(new FormData(form));
-      Object.keys(payload).forEach(key => { if (!payload[key]) delete payload[key]; });
-      submit.disabled = true;
-      errorBox.hidden = true;
-      try {
-        const response = await fetch("/api/events", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(body.detail || `Could not register event (${response.status})`);
-        }
-        form.reset();
-        await refresh();
-      } catch (error) {
-        errorBox.textContent = error.message;
-        errorBox.hidden = false;
-      } finally {
-        submit.disabled = false;
-      }
-    });
+  function positionRow(eventId, position, openDetails) {
+    const detailKey = keyFor("position", eventId, position.token_id);
+    const pnlClass = position.unrealized_pnl == null ? "" : position.unrealized_pnl >= 0 ? "positive" : "negative";
+    return `<div class="position">
+      <div class="position-top"><div class="outcome">${esc(position.outcome)}<small>${position.shares.toFixed(2)} shares · average ${cents(position.avg_entry_price)}</small></div><span class="tag ${tagClass(position.advice)}">${esc(position.advice)}</span></div>
+      <div class="figs">
+        <div class="fig"><div class="key">Cash-out bid</div><div class="value">${cents(position.current_bid)}</div><div class="hint">Before fees/slippage</div></div>
+        <div class="fig"><div class="key">Cash value</div><div class="value">${position.cash_value == null ? "—" : "$"+position.cash_value.toFixed(2)}</div><div class="hint">Shares × bid</div></div>
+        <div class="fig"><div class="key">Unrealized P/L</div><div class="value ${pnlClass}">${money(position.unrealized_pnl)}</div><div class="hint">${position.roi == null ? "—" : pct(position.roi)} return</div></div>
+        <div class="fig"><div class="key">Remaining hold edge</div><div class="value">${signedCents(position.remaining_hold_edge)}</div><div class="hint">Model fair minus bid</div></div>
+      </div>
+      <details class="why" data-detail-key="${detailKey}"${openDetails.has(detailKey) ? " open" : ""}><summary>Why this hold/cash status?</summary><ul>${position.reasons.map(reason => `<li>${esc(reason)}</li>`).join("")}</ul></details>
+      <button class="position-remove" type="button" data-remove-position data-event-id="${esc(eventId)}" data-token-id="${esc(position.token_id)}">Remove position</button>
+    </div>`;
+  }
 
-    document.querySelector("#demo").addEventListener("click", async event => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      try {
-        const response = await fetch("/api/demo", { method: "POST" });
-        if (!response.ok) throw new Error("Could not launch demo");
-        await refresh();
-      } finally {
-        button.disabled = false;
-      }
-    });
+  function fallbackSignal(signal) {
+    return `<div class="market"><div class="market-top"><div class="outcome">${esc(signal.outcome)}<small>${esc(signal.market)} demo signal</small></div><span class="tag ${signal.action === "PAPER_BET" ? "entry" : "wait"}">${esc(signal.action.replace("_"," "))}</span></div>
+      <div class="figs"><div class="fig"><div class="key">Model probability</div><div class="value">${pct(signal.model_probability)}</div><div class="hint">${signal.model_live_prob == null ? "Market consensus" : `Live model ${pct(signal.model_live_prob)}`}</div></div><div class="fig"><div class="key">Estimated edge</div><div class="value">${signedCents(signal.edge)}</div></div><div class="fig"><div class="key">Quality</div><div class="value">${signal.confidence.toFixed(0)}/100</div></div></div></div>`;
+  }
 
-    document.querySelector("#events").addEventListener("click", async event => {
-      const button = event.target.closest("[data-remove-event]");
-      if (!button) return;
-      button.disabled = true;
-      const response = await fetch(`/api/events/${encodeURIComponent(button.dataset.removeEvent)}`, { method: "DELETE" });
-      if (response.ok) { await refresh(); refreshMetrics(); }
-      else button.disabled = false;
-    });
+  function eventCard(view, openDetails) {
+    const {event,state_points,quote_points,latest_state:state,actionable_markets:markets,positions,signals} = view;
+    const score = state ? `${state.home_score}<span class="sep">–</span>${state.away_score}` : "—";
+    const portfolio = positions.length ? `<div class="section-strip"><span>My positions</span> · paper hold/cash monitor</div><div class="portfolio">${positions.map(p => positionRow(event.id,p,openDetails)).join("")}</div>` : "";
+    const marketBody = markets.length ? markets.map(m => marketRow(event.id,m,openDetails)).join("") : signals.length && !event.polymarket_slug ? signals.slice(0,3).map(fallbackSignal).join("") : '<div class="pending">Waiting for a fresh executable ask and reference prices…</div>';
+    const link = event.polymarket_url ? `<a href="${esc(event.polymarket_url)}" target="_blank" rel="noopener">Open event ↗</a>` : "demo";
+    const restriction = event.polymarket_restricted ? '<strong>Region notice:</strong> Polymarket marks this event restricted. The monitor shows public data only and does not bypass availability rules.' : 'Only selections accepting orders with a visible ask are listed.';
+    return `<article class="event" data-event-id="${esc(event.id)}"><div class="event-head"><div><div class="name">${esc(event.name)}</div><div class="meta">${esc(event.sport)} · ${link} · ${state_points} state / ${quote_points} quote updates</div></div><div class="event-actions"><div class="score">${score}</div><button class="remove" data-remove-event="${esc(event.id)}">Remove</button></div></div>
+      <div class="notice">${restriction}</div>${portfolio}<div class="section-strip"><span>Actionable selections</span> · buy, sell, margin, and risk</div><div>${marketBody}</div></article>`;
+  }
 
-    function metricTile(key, value, cls, sub) {
-      return `<div class="mtile"><div class="k">${key}</div>` +
-        `<div class="v${cls ? " " + cls : ""}">${value}</div>` +
-        `${sub ? `<div class="sub2">${sub}</div>` : ""}</div>`;
-    }
+  function showActionError(message) { const box=document.querySelector("#action-error"); box.textContent=message; box.hidden=false; }
+  function metricTile(key,value,cls="",sub="") { return `<div class="mtile"><div class="k">${key}</div><div class="v ${cls}">${value}</div>${sub?`<div class="sub2">${sub}</div>`:""}</div>`; }
+  function reliabilityView(bins) { if(!bins?.length)return "";const columns=bins.map(bin=>`<div class="rbin" title="predicted ${pct(bin.mean_predicted)} · actual ${pct(bin.empirical_rate)} · n=${bin.count}"><div class="rtrack"><div class="remp" style="height:${(bin.empirical_rate*100).toFixed(1)}%"></div><div class="rpred" style="bottom:${(bin.mean_predicted*100).toFixed(1)}%"></div></div><div class="rlabel">${Math.round(bin.lo*100)}</div></div>`).join("");return `<div class="reliability">${columns}</div><div class="metrics-sub">Bar = actual win rate · line = predicted probability</div>`; }
+  async function refreshMetrics() { const body=document.querySelector("#metrics-body"),sub=document.querySelector("#metrics-sub");try{const response=await fetch("/api/metrics");if(!response.ok)return;const m=await response.json();if(!m?.n_bets){sub.textContent="";body.innerHTML='<div class="metrics-empty">No paper bets logged yet. CLV and calibration appear after qualified signals and event closes.</div>';return}const clv=m.clv||{},model=m.model||{},base=m.market_baseline||{};sub.textContent=`${m.n_bets} paper bet(s) · ${m.n_settled} settled`;const tiles=[metricTile("Beat close",clv.beat_close_rate==null?"—":pct(clv.beat_close_rate),clv.beat_close_rate>=.5?"good":"bad",clv.n?`n=${clv.n}`:"awaiting closes"),metricTile("Mean CLV",clv.mean_clv==null?"—":signedCents(clv.mean_clv),clv.mean_clv>=0?"good":"bad","vs closing fair"),metricTile("Settled",String(m.n_settled),"","moneyline"),metricTile("Model Brier",model.brier==null?"—":model.brier.toFixed(3),model.brier!=null&&base.brier!=null&&model.brier<base.brier?"good":"",base.brier==null?"awaiting settle":`market ${base.brier.toFixed(3)}`)];if(model.log_loss!=null)tiles.push(metricTile("Log loss",model.log_loss.toFixed(3)));if(model.ece!=null)tiles.push(metricTile("ECE",model.ece.toFixed(3),"","calibration gap"));body.innerHTML=`<div class="metric-tiles">${tiles.join("")}</div>`+reliabilityView(m.reliability)}catch{}}
+  async function refresh() {
+    if (refreshInFlight || document.activeElement?.closest("[data-save-position]")) return;
+    refreshInFlight=true; const root=document.querySelector("#events");
+    const openDetails=new Set([...root.querySelectorAll("details[open][data-detail-key]")].map(d=>d.dataset.detailKey));
+    try { const response=await fetch("/api/events"); if(!response.ok) throw new Error(); const events=await response.json();
+      root.innerHTML=events.length?`<div class="stack">${events.map(e=>eventCard(e,openDetails)).join("")}</div>`:'<div class="panel empty"><b>No events yet</b>Paste a Polymarket event link to begin.</div>';
+    } catch { if(!root.children.length) root.innerHTML='<div class="panel empty"><b>Dashboard disconnected</b>Check that the server is running.</div>'; }
+    finally { refreshInFlight=false; }
+  }
 
-    function reliabilityView(bins) {
-      if (!bins || !bins.length) return "";
-      const cols = bins.map(bin => `<div class="rbin" title="predicted ${pct(bin.mean_predicted)} · actual ${pct(bin.empirical_rate)} · n=${bin.count}">
-          <div class="rtrack">
-            <div class="remp" style="height:${(bin.empirical_rate * 100).toFixed(1)}%"></div>
-            <div class="rpred" style="bottom:${(bin.mean_predicted * 100).toFixed(1)}%"></div>
-          </div>
-          <div class="rlabel">${Math.round(bin.lo * 100)}</div>
-        </div>`).join("");
-      return `<div class="reliability">${cols}</div>` +
-        `<div class="metrics-sub" style="margin-top:8px">Reliability by predicted probability — bar = actual win rate, line = predicted. Aligned = calibrated.</div>`;
-    }
-
-    async function refreshMetrics() {
-      const body = document.querySelector("#metrics-body");
-      const sub = document.querySelector("#metrics-sub");
-      let m;
-      try {
-        const response = await fetch("/api/metrics");
-        if (!response.ok) return;
-        m = await response.json();
-      } catch (error) { return; }
-      if (!m || !m.n_bets) {
-        sub.textContent = "";
-        body.innerHTML = '<div class="metrics-empty">No paper bets logged yet — CLV and calibration appear once PAPER_BET signals fire and events finalize.</div>';
-        return;
-      }
-      const clv = m.clv || {}, model = m.model || {}, base = m.market_baseline || {};
-      sub.textContent = `${m.n_bets} paper bet(s) · ${m.n_settled} settled`;
-      const tiles = [];
-      if (clv.beat_close_rate != null) {
-        tiles.push(metricTile("Beat close", `${(clv.beat_close_rate * 100).toFixed(0)}%`,
-          clv.beat_close_rate >= 0.5 ? "good" : "bad", `n=${clv.n}`));
-      } else {
-        tiles.push(metricTile("Beat close", "—", "", "awaiting closes"));
-      }
-      tiles.push(clv.mean_clv != null
-        ? metricTile("Mean CLV", signedPct(clv.mean_clv), clv.mean_clv >= 0 ? "good" : "bad", "vs closing fair")
-        : metricTile("Mean CLV", "—", ""));
-      tiles.push(metricTile("Settled", String(m.n_settled), "", "moneyline"));
-      if (model.brier != null && base.brier != null) {
-        tiles.push(metricTile("Model Brier", model.brier.toFixed(3),
-          model.brier < base.brier ? "good" : "bad", `mkt ${base.brier.toFixed(3)}`));
-      } else if (model.brier != null) {
-        tiles.push(metricTile("Model Brier", model.brier.toFixed(3), ""));
-      } else {
-        tiles.push(metricTile("Model Brier", "—", "", "awaiting settle"));
-      }
-      if (model.log_loss != null) {
-        tiles.push(metricTile("Log loss", model.log_loss.toFixed(3), "",
-          base.log_loss != null ? `mkt ${base.log_loss.toFixed(3)}` : ""));
-      }
-      if (model.ece != null) {
-        tiles.push(metricTile("ECE", model.ece.toFixed(3), "", "calibration gap"));
-      }
-      body.innerHTML = `<div class="metric-tiles">${tiles.join("")}</div>` + reliabilityView(m.reliability);
-    }
-
-    fetch("/api/config")
-      .then(response => response.json())
-      .then(config => {
-        document.querySelector("#config").textContent =
-          `Quality ≥ ${config.confidence_threshold} · Edge ≥ ${(config.edge_threshold * 100).toFixed(1)}%`;
-      })
-      .catch(() => { document.querySelector("#config").textContent = "Thresholds unavailable"; });
-
-    refresh();
-    refreshMetrics();
-    setInterval(refresh, 1000);
-    setInterval(refreshMetrics, 5000);
-  </script>
+  document.querySelector("#form").addEventListener("submit",async event=>{event.preventDefault();const form=event.currentTarget,button=document.querySelector("#submit-event"),box=document.querySelector("#form-error");
+    const payload=Object.fromEntries(new FormData(form));Object.keys(payload).forEach(k=>{if(!payload[k])delete payload[k]});button.disabled=true;box.hidden=true;
+    try{const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.detail||`Could not monitor event (${response.status})`);form.reset();await refresh();}
+    catch(error){box.textContent=error.message;box.hidden=false}finally{button.disabled=false}});
+  document.querySelector("#demo").addEventListener("click",async event=>{event.currentTarget.disabled=true;try{await fetch("/api/demo",{method:"POST"});await refresh();await refreshMetrics()}finally{event.currentTarget.disabled=false}});
+  document.querySelector("#events").addEventListener("submit",async event=>{const form=event.target.closest("[data-save-position]");if(!form)return;event.preventDefault();const button=form.querySelector("button"),data=new FormData(form);button.disabled=true;document.querySelector("#action-error").hidden=true;
+    const payload={token_id:form.dataset.tokenId,market:form.dataset.market,outcome:form.dataset.outcome,shares:Number(data.get("shares")),avg_entry_price:Number(data.get("entry_cents"))/100};
+    try{const response=await fetch(`/api/events/${encodeURIComponent(form.dataset.eventId)}/positions`,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.detail||"Could not save position");document.activeElement.blur();await refresh()}
+    catch(error){showActionError(error.message)}finally{button.disabled=false}});
+  document.querySelector("#events").addEventListener("click",async event=>{const removeEvent=event.target.closest("[data-remove-event]"),removePosition=event.target.closest("[data-remove-position]");
+    if(removeEvent){removeEvent.disabled=true;const response=await fetch(`/api/events/${encodeURIComponent(removeEvent.dataset.removeEvent)}`,{method:"DELETE"});if(response.ok){await refresh();await refreshMetrics()}else removeEvent.disabled=false}
+    if(removePosition){removePosition.disabled=true;const response=await fetch(`/api/events/${encodeURIComponent(removePosition.dataset.eventId)}/positions/${encodeURIComponent(removePosition.dataset.tokenId)}`,{method:"DELETE"});if(response.ok)await refresh();else removePosition.disabled=false}});
+  fetch("/api/config").then(r=>r.json()).then(c=>document.querySelector("#config").textContent=`Quality ≥ ${c.confidence_threshold} · Required edge ≥ ${(c.edge_threshold*100).toFixed(1)}%`).catch(()=>document.querySelector("#config").textContent="Thresholds unavailable");
+  refresh();refreshMetrics();setInterval(refresh,2000);setInterval(refreshMetrics,5000);
+</script>
 </body>
 </html>
-

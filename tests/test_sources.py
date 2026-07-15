@@ -1,5 +1,6 @@
 from app.models import Event
-from app.sources import odds_api_quotes, odds_api_request
+from app.sources import (canonical_market, extract_polymarket_slug, infer_polymarket_event,
+                         odds_api_quotes, odds_api_request)
 
 
 def event(**overrides):
@@ -58,3 +59,21 @@ def test_quotes_filter_matchup_and_keep_line_points():
         "New York Knicks", "Boston Celtics +2.5", "Over 221.5"
     ]
     assert all(quote.source == "Example Book" for quote in quotes)
+    assert [quote.market for quote in quotes] == ["moneyline", "spread", "total"]
+
+
+def test_full_mobile_polymarket_link_resolves_to_event_slug():
+    assert extract_polymarket_slug(
+        "https://polymarket.com/event/nba-nyk-bos-2026?tid=mobile-share"
+    ) == "nba-nyk-bos-2026"
+    assert extract_polymarket_slug("nba-nyk-bos-2026") == "nba-nyk-bos-2026"
+
+
+def test_polymarket_metadata_infers_nba_and_matchup():
+    inferred = infer_polymarket_event({"title": "Boston Celtics vs. New York Knicks",
+                                      "seriesSlug": "nba"})
+    assert inferred["sport"] == "basketball"
+    assert inferred["odds_api_sport"] == "basketball_nba"
+    assert inferred["away"] == "Boston Celtics"
+    assert inferred["home"] == "New York Knicks"
+    assert canonical_market("h2h") == "moneyline"
