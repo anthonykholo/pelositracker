@@ -26,6 +26,8 @@ def test_dashboard_contains_merged_ui_behaviors():
         assert "Paste Polymarket link" in html
         assert "data-save-position" in html
         assert "Entry margin" in html
+        assert "data-market-filter" in html
+        assert "Paper entry call" in html
 
 
 def test_position_can_be_saved_and_removed_for_a_visible_selection():
@@ -44,3 +46,21 @@ def test_position_can_be_saved_and_removed_for_a_visible_selection():
         }
         removed = client.delete(f"/api/events/{event_id}/positions/token-1")
         assert removed.status_code == 204
+
+
+def test_event_lists_only_market_types_currently_available_for_that_sport():
+    with TestClient(app) as client:
+        created = client.post("/api/demo").json()
+        event_id = created["event"]["id"]
+        store.add_quotes([
+            Quote(event_id, "moneyline", "home", .52, "Polymarket",
+                  bid=.51, ask=.53, token_id="moneyline-token"),
+            Quote(event_id, "spread", "home +3.5", .50, "Polymarket",
+                  bid=.49, ask=.51, token_id="spread-token"),
+        ])
+        view = client.get(f"/api/events/{event_id}").json()
+        by_key = {market["key"]: market for market in view["market_types"]}
+        assert by_key["moneyline"]["label"] == "Moneyline"
+        assert by_key["spread"]["label"] == "Spread"
+        assert by_key["moneyline"]["selection_count"] >= 1
+        assert by_key["spread"]["selection_count"] >= 1

@@ -38,16 +38,18 @@
     .name{font:700 14px var(--mono);letter-spacing:.04em;text-transform:uppercase}.meta{margin-top:3px;color:var(--muted);font:11px var(--mono)}.meta a{color:var(--cyan);text-decoration:none}.event-actions{display:flex;align-items:center;gap:12px}.score{font:700 23px var(--mono);white-space:nowrap}.sep{color:var(--coral);margin:0 4px}.remove,.position-remove{padding:6px 9px;color:var(--red);background:transparent;border:1px solid rgba(255,77,46,.45);font-size:10px}
     .notice{padding:10px 18px;color:var(--muted);background:rgba(255,207,63,.04);border-bottom:1px solid var(--line);font-size:11px}.notice strong{color:var(--yellow)}
     .section-strip{padding:9px 18px;color:var(--muted);background:var(--bg);border-bottom:1px solid var(--line);font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase}.section-strip span{color:var(--cyan)}
+    .line-picker{padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel2)}.line-picker-label{margin-bottom:8px;color:var(--muted);font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}.line-buttons{display:flex;gap:7px;flex-wrap:wrap}.line-button{padding:7px 10px;color:var(--muted);background:var(--bg);border:1px solid var(--bright)}.line-button[aria-pressed="true"]{color:#06100f;background:var(--cyan);border-color:var(--cyan)}.line-button small{opacity:.75}
     .market,.position{padding:16px 18px;border-bottom:1px solid var(--line)}.market:last-child,.position:last-child{border-bottom:0}.market-top,.position-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.outcome{font:700 13px var(--mono);text-transform:uppercase}.outcome small{display:block;margin-top:3px;color:var(--muted);font:400 11px var(--mono);text-transform:none}
     .tag{padding:4px 9px;border:1px solid currentColor;font:700 10px var(--mono);letter-spacing:.08em;white-space:nowrap}.entry,.hold{color:var(--cyan);background:rgba(41,231,214,.09)}.wait,.monitor{color:var(--yellow);background:rgba(255,207,63,.07)}.cash,.exit{color:var(--red);background:rgba(255,77,46,.09)}.marketonly{color:var(--muted)}
     .figs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:13px}.fig{padding:9px 10px;background:var(--panel2);border-left:2px solid var(--bright)}.key{color:var(--muted);font:10px var(--mono);text-transform:uppercase}.value{margin-top:3px;font:700 17px var(--mono);font-variant-numeric:tabular-nums}.hint{margin-top:2px;color:var(--faint);font-size:10px}.positive{color:var(--cyan)}.negative{color:var(--red)}
     .guide{margin-top:12px;padding:10px 11px;background:rgba(41,231,214,.035);border:1px solid var(--line);font-size:12px}.guide strong{color:var(--cyan);font-family:var(--mono)}
+    .decision{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:3px 14px;margin-top:12px;padding:11px 13px;border:1px solid currentColor;background:rgba(255,255,255,.02)}.decision-label{grid-column:1;color:inherit;font:700 9px var(--mono);letter-spacing:.14em;text-transform:uppercase}.decision strong{grid-column:1;font:900 24px var(--mono);letter-spacing:.04em;line-height:1}.decision span:last-child{grid-column:2;grid-row:1 / span 2;color:var(--text);font-size:12px}.call-buy,.call-hold{color:var(--cyan);background:rgba(41,231,214,.075)}.call-wait,.call-watch{color:var(--yellow);background:rgba(255,207,63,.06)}.call-sell{color:var(--red);background:rgba(255,77,46,.08)}
     .why{margin-top:11px}.why ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:12px}.why li{margin:4px 0}.risk{color:#d8c88d!important}
     .position-form{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;margin-top:11px;padding:11px;background:var(--panel2);border:1px solid var(--line)}.position-form label{margin:0 0 4px}.position-form button{height:38px;color:#06100f;background:var(--cyan)}
     .portfolio{background:rgba(41,231,214,.025)}.pnl{font-weight:700}.pending{padding:18px;color:var(--muted);font:12px var(--mono)}.empty{padding:70px 20px;text-align:center;color:var(--muted)}.empty b{display:block;color:var(--text);font:700 14px var(--mono);text-transform:uppercase;margin-bottom:6px}
     .metrics-panel{padding:18px;margin-bottom:20px}.metrics-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}.metrics-head .title{margin:0}.metrics-sub{color:var(--faint);font:11px var(--mono)}.metric-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;margin-top:14px}.mtile{padding:10px 12px;background:var(--panel2);border-left:2px solid var(--bright)}.mtile .k{color:var(--muted);font:10px var(--mono);text-transform:uppercase}.mtile .v{margin-top:4px;font:700 19px var(--mono)}.mtile .v.good{color:var(--cyan)}.mtile .v.bad{color:var(--red)}.mtile .sub2{color:var(--faint);font:10px var(--mono)}.metrics-empty{margin-top:12px;color:var(--muted);font:12px var(--mono)}.reliability{display:flex;align-items:flex-end;gap:6px;margin-top:16px;flex-wrap:wrap}.rbin{display:flex;flex-direction:column;align-items:center;gap:4px}.rtrack{position:relative;width:26px;height:58px;background:var(--panel2);border:1px solid var(--line)}.remp{position:absolute;left:0;right:0;bottom:0;background:rgba(255,77,46,.55)}.rpred{position:absolute;left:-1px;right:-1px;height:2px;background:var(--cyan)}.rlabel{color:var(--faint);font:9px var(--mono)}
     @media(max-width:960px){.grid{grid-template-columns:1fr}.figs{grid-template-columns:1fr 1fr}.panel{position:static}}
-    @media(max-width:560px){.wrap{padding:14px 10px 50px}header,.event-head{align-items:flex-start;flex-direction:column}.event-actions{width:100%;justify-content:space-between}.figs{grid-template-columns:1fr 1fr}.position-form{grid-template-columns:1fr}.market-top,.position-top{align-items:flex-start}.config{white-space:normal}}
+    @media(max-width:560px){.wrap{padding:14px 10px 50px}header,.event-head{align-items:flex-start;flex-direction:column}.event-actions{width:100%;justify-content:space-between}.figs{grid-template-columns:1fr 1fr}.position-form{grid-template-columns:1fr}.market-top,.position-top{align-items:flex-start}.config{white-space:normal}.decision{grid-template-columns:1fr}.decision span:last-child{grid-column:1;grid-row:auto}.line-button{flex:1 1 105px}}
     @media(prefers-reduced-motion:reduce){.dot{animation:none}}
   </style>
 </head>
@@ -94,6 +96,7 @@
   const signedCents = value => value == null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}¢`;
   const money = value => value == null ? "—" : `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
   const keyFor = (...parts) => encodeURIComponent(parts.join("|"));
+  const marketFilters = new Map();
   let refreshInFlight = false;
 
   function tagClass(action) {
@@ -103,6 +106,18 @@
     if (action === "EXIT WATCH") return "exit";
     if (action === "MARKET ONLY") return "marketonly";
     return "wait";
+  }
+
+  function decisionClass(recommendation) {
+    if (recommendation === "BUY") return "call-buy";
+    if (recommendation === "HOLD") return "call-hold";
+    if (recommendation === "SELL / CASH OUT") return "call-sell";
+    if (recommendation === "WATCH EXIT") return "call-watch";
+    return "call-wait";
+  }
+
+  function decision(recommendation, reason, label) {
+    return `<div class="decision ${decisionClass(recommendation)}"><span class="decision-label">${esc(label)}</span><strong>${esc(recommendation)}</strong><span>${esc(reason)}</span></div>`;
   }
 
   function marketRow(eventId, market, openDetails) {
@@ -116,6 +131,7 @@
     const risks = market.risk_flags.length ? market.risk_flags : ["No elevated execution flags detected; continue watching price and news latency."];
     return `<div class="market" data-token-id="${esc(market.token_id)}">
       <div class="market-top"><div class="outcome">${esc(market.outcome)}<small>${esc(market.question)}</small></div><span class="tag ${tagClass(market.entry_action)}">${esc(market.entry_action)}</span></div>
+      ${decision(market.recommendation, market.recommendation_reason, "Paper entry call")}
       <div class="figs">
         <div class="fig"><div class="key">Buy now</div><div class="value">${cents(market.buy_price)}</div><div class="hint">Executable ask</div></div>
         <div class="fig"><div class="key">Sell now</div><div class="value">${cents(market.sell_price)}</div><div class="hint">Executable bid</div></div>
@@ -140,6 +156,7 @@
     const pnlClass = position.unrealized_pnl == null ? "" : position.unrealized_pnl >= 0 ? "positive" : "negative";
     return `<div class="position">
       <div class="position-top"><div class="outcome">${esc(position.outcome)}<small>${position.shares.toFixed(2)} shares · average ${cents(position.avg_entry_price)}</small></div><span class="tag ${tagClass(position.advice)}">${esc(position.advice)}</span></div>
+      ${decision(position.recommendation, position.recommendation_reason, "Position call")}
       <div class="figs">
         <div class="fig"><div class="key">Cash-out bid</div><div class="value">${cents(position.current_bid)}</div><div class="hint">Before fees/slippage</div></div>
         <div class="fig"><div class="key">Cash value</div><div class="value">${position.cash_value == null ? "—" : "$"+position.cash_value.toFixed(2)}</div><div class="hint">Shares × bid</div></div>
@@ -156,15 +173,29 @@
       <div class="figs"><div class="fig"><div class="key">Model probability</div><div class="value">${pct(signal.model_probability)}</div><div class="hint">${signal.model_live_prob == null ? "Market consensus" : `Live model ${pct(signal.model_live_prob)}`}</div></div><div class="fig"><div class="key">Estimated edge</div><div class="value">${signedCents(signal.edge)}</div></div><div class="fig"><div class="key">Quality</div><div class="value">${signal.confidence.toFixed(0)}/100</div></div></div></div>`;
   }
 
+  function linePicker(event, marketTypes) {
+    if (!marketTypes?.length) return "";
+    let selected = marketFilters.get(event.id);
+    if (selected && !marketTypes.some(type => selected.has(type.key))) {
+      marketFilters.delete(event.id);
+      selected = null;
+    }
+    const allSelected = !selected;
+    const buttons = marketTypes.map(type => `<button type="button" class="line-button" data-market-filter="${esc(type.key)}" data-filter-event="${esc(event.id)}" aria-pressed="${allSelected || selected.has(type.key)}">${esc(type.label)} <small>(${type.selection_count})</small></button>`).join("");
+    return `<div class="line-picker"><div class="line-picker-label">Choose lines to display for ${esc(event.sport)}</div><div class="line-buttons"><button type="button" class="line-button" data-market-filter="all" data-filter-event="${esc(event.id)}" aria-pressed="${allSelected}">All lines</button>${buttons}</div></div>`;
+  }
+
   function eventCard(view, openDetails) {
-    const {event,state_points,quote_points,latest_state:state,actionable_markets:markets,positions,signals} = view;
+    const {event,state_points,quote_points,latest_state:state,actionable_markets:markets,market_types:marketTypes,positions,signals} = view;
     const score = state ? `${state.home_score}<span class="sep">–</span>${state.away_score}` : "—";
     const portfolio = positions.length ? `<div class="section-strip"><span>My positions</span> · paper hold/cash monitor</div><div class="portfolio">${positions.map(p => positionRow(event.id,p,openDetails)).join("")}</div>` : "";
-    const marketBody = markets.length ? markets.map(m => marketRow(event.id,m,openDetails)).join("") : signals.length && !event.polymarket_slug ? signals.slice(0,3).map(fallbackSignal).join("") : '<div class="pending">Waiting for a fresh executable ask and reference prices…</div>';
+    const selected = marketFilters.get(event.id);
+    const visibleMarkets = selected ? markets.filter(market => selected.has(market.market)) : markets;
+    const marketBody = visibleMarkets.length ? visibleMarkets.map(m => marketRow(event.id,m,openDetails)).join("") : signals.length && !event.polymarket_slug ? signals.slice(0,3).map(fallbackSignal).join("") : '<div class="pending">Waiting for a fresh executable ask and reference prices…</div>';
     const link = event.polymarket_url ? `<a href="${esc(event.polymarket_url)}" target="_blank" rel="noopener">Open event ↗</a>` : "demo";
     const restriction = event.polymarket_restricted ? '<strong>Region notice:</strong> Polymarket marks this event restricted. The monitor shows public data only and does not bypass availability rules.' : 'Only selections accepting orders with a visible ask are listed.';
     return `<article class="event" data-event-id="${esc(event.id)}"><div class="event-head"><div><div class="name">${esc(event.name)}</div><div class="meta">${esc(event.sport)} · ${link} · ${state_points} state / ${quote_points} quote updates</div></div><div class="event-actions"><div class="score">${score}</div><button class="remove" data-remove-event="${esc(event.id)}">Remove</button></div></div>
-      <div class="notice">${restriction}</div>${portfolio}<div class="section-strip"><span>Actionable selections</span> · buy, sell, margin, and risk</div><div>${marketBody}</div></article>`;
+      <div class="notice">${restriction}</div>${portfolio}<div class="section-strip"><span>Actionable selections</span> · buy, sell, margin, and risk</div>${linePicker(event, marketTypes)}<div>${marketBody}</div></article>`;
   }
 
   function showActionError(message) { const box=document.querySelector("#action-error"); box.textContent=message; box.hidden=false; }
@@ -190,7 +221,9 @@
     const payload={token_id:form.dataset.tokenId,market:form.dataset.market,outcome:form.dataset.outcome,shares:Number(data.get("shares")),avg_entry_price:Number(data.get("entry_cents"))/100};
     try{const response=await fetch(`/api/events/${encodeURIComponent(form.dataset.eventId)}/positions`,{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.detail||"Could not save position");document.activeElement.blur();await refresh()}
     catch(error){showActionError(error.message)}finally{button.disabled=false}});
-  document.querySelector("#events").addEventListener("click",async event=>{const removeEvent=event.target.closest("[data-remove-event]"),removePosition=event.target.closest("[data-remove-position]");
+  document.querySelector("#events").addEventListener("click",async event=>{const filterButton=event.target.closest("[data-market-filter]"),removeEvent=event.target.closest("[data-remove-event]"),removePosition=event.target.closest("[data-remove-position]");
+    if(filterButton){const eventId=filterButton.dataset.filterEvent,key=filterButton.dataset.marketFilter;
+      if(key==="all")marketFilters.delete(eventId);else{const keys=[...document.querySelectorAll(`[data-filter-event="${CSS.escape(eventId)}"][data-market-filter]:not([data-market-filter="all"])`)].map(button=>button.dataset.marketFilter);const current=marketFilters.get(eventId),next=current?new Set(current):new Set([key]);if(current){next.has(key)?next.delete(key):next.add(key)}if(!next.size||next.size===keys.length)marketFilters.delete(eventId);else marketFilters.set(eventId,next)}await refresh();return}
     if(removeEvent){removeEvent.disabled=true;const response=await fetch(`/api/events/${encodeURIComponent(removeEvent.dataset.removeEvent)}`,{method:"DELETE"});if(response.ok){await refresh();await refreshMetrics()}else removeEvent.disabled=false}
     if(removePosition){removePosition.disabled=true;const response=await fetch(`/api/events/${encodeURIComponent(removePosition.dataset.eventId)}/positions/${encodeURIComponent(removePosition.dataset.tokenId)}`,{method:"DELETE"});if(response.ok)await refresh();else removePosition.disabled=false}});
   fetch("/api/config").then(r=>r.json()).then(c=>document.querySelector("#config").textContent=`Quality ≥ ${c.confidence_threshold} · Required edge ≥ ${(c.edge_threshold*100).toFixed(1)}%`).catch(()=>document.querySelector("#config").textContent="Thresholds unavailable");

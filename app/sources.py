@@ -425,11 +425,33 @@ async def demo_stream(event: Event, emit_state, emit_quotes):
                 probability = max(0.12, probability - random.uniform(0.015, 0.04))
         await emit_state(GameState(event.id, home, away, f"Q{min(4, 1 + tick // 20)}",
                                    f"{max(0, 12 - tick % 12):02d}:00", "Demo feed"))
+        spread_home = max(0.08, min(0.92, probability - 0.04))
+        total_over = max(0.30, min(0.70, 0.51 + (home + away - 20) * 0.002))
+        markets = [
+            ("moneyline", "home", "away", probability, "Winner"),
+            ("spread", "home -3.5", "away +3.5", spread_home, "Spread: home -3.5"),
+            ("total", "Over 214.5", "Under 214.5", total_over, "Total: 214.5"),
+        ]
         quotes = []
-        for source, noise in (("DemoBook A", -0.025), ("DemoBook B", 0.005), ("Demo exchange", 0.02)):
-            p = max(0.02, min(0.98, probability + noise + random.uniform(-0.008, 0.008)))
-            quotes.extend([Quote(event.id, "moneyline", "home", p, source, ask=p + 0.01, bid=p - 0.01),
-                           Quote(event.id, "moneyline", "away", 1 - p, source,
-                                 ask=1 - p + 0.01, bid=1 - p - 0.01)])
+        for market, first, second, base, _question in markets:
+            for source, noise in (("DemoBook A", -0.025), ("DemoBook B", 0.005),
+                                  ("Demo exchange", 0.02)):
+                p = max(0.02, min(0.98, base + noise + random.uniform(-0.008, 0.008)))
+                quotes.extend([
+                    Quote(event.id, market, first, p, source, ask=min(.99, p + .01),
+                          bid=max(.01, p - .01)),
+                    Quote(event.id, market, second, 1 - p, source, ask=min(.99, 1 - p + .01),
+                          bid=max(.01, 1 - p - .01)),
+                ])
+        for market, first, second, base, question in markets:
+            first_ask = max(.02, min(.98, base - .045))
+            second_ask = max(.02, min(.98, 1 - base + .025))
+            for suffix, outcome, ask in (("a", first, first_ask), ("b", second, second_ask)):
+                quotes.append(Quote(
+                    event.id, market, outcome, ask - .01, "Polymarket",
+                    bid=max(.01, ask - .02), ask=ask, token_id=f"demo-{market}-{suffix}",
+                    market_slug=f"demo-{market}", question=question, bid_size=250,
+                    ask_size=200, market_liquidity=10_000, min_order_size=5, tick_size=.01,
+                ))
         await emit_quotes(quotes)
         await asyncio.sleep(1)

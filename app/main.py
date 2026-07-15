@@ -135,10 +135,23 @@ def event_view(event_id: str):
         raise HTTPException(404, "event not found")
     signals = store.signals[event_id]
     positions = ledger.event_positions(event_id) if ledger is not None else []
+    actionable = market_views(store.quotes[event_id], signals, engine.edge_threshold)
+    counts: dict[str, int] = {}
+    for market in actionable:
+        counts[market["market"]] = counts.get(market["market"], 0) + 1
+    preferred_order = {"moneyline": 0, "spread": 1, "total": 2}
+    market_types = [
+        {"key": key, "label": {"moneyline": "Moneyline", "spread": "Spread",
+                                "total": "Total"}.get(key, key.replace("_", " ").title()),
+         "selection_count": count}
+        for key, count in sorted(counts.items(), key=lambda item: (
+            preferred_order.get(item[0], 99), item[0]))
+    ]
     return {"event": as_json(event),
             "latest_state": as_json(store.states[event_id][-1]) if store.states[event_id] else None,
             "signals": as_json(signals),
-            "actionable_markets": market_views(store.quotes[event_id], signals, engine.edge_threshold),
+            "actionable_markets": actionable,
+            "market_types": market_types,
             "positions": position_views(positions, store.quotes[event_id], signals,
                                           engine.confidence_threshold),
             "state_points": len(store.states[event_id]),

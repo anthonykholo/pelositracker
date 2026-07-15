@@ -9,6 +9,7 @@ A paper-only live sports market monitor with a Rust scoring engine and a FastAPI
 - Public Polymarket market and sports WebSocket streams.
 - Paste a complete Polymarket event or mobile share link; no manual slug is required.
 - Actionable-only selection view based on accepting-orders status and executable asks.
+- Per-event line filters generated from the sport markets actually available (moneyline, spread, total, and sport-specific types).
 - Optional multi-sportsbook polling through TheOddsAPI.
 - Rust-native consensus, momentum, freshness, spread, edge, and confidence calculations.
 - Paper-signal safety gates with plain-language explanations.
@@ -16,6 +17,7 @@ A paper-only live sports market monitor with a Rust scoring engine and a FastAPI
 - Event removal that cancels feed tasks and clears in-memory event data.
 - Credential-free simulation mode for testing the complete pipeline.
 - Durable paper positions with entry price, shares, cash-out value, P/L, and explainable hold/cash monitoring.
+- Prominent paper calls: `BUY` or `WAIT` for entries and `HOLD`, `SELL / CASH OUT`, or `WATCH EXIT` for saved positions.
 
 ## Quick start on Windows
 
@@ -28,7 +30,7 @@ build-rust.cmd
 start.cmd
 ```
 
-Open [http://127.0.0.1:8765](http://127.0.0.1:8765), then select **Launch live demo**.
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765), then select **Launch paper demo**.
 
 `start.cmd` starts the server from the correct project directory. You only need to rerun `build-rust.cmd` after changing `native_engine/src/lib.rs`.
 
@@ -89,6 +91,9 @@ For The Odds API, get valid sport keys from `GET /v4/sports` and event IDs from 
 
 ## Dashboard guide
 
+- **Line filters**: each event lists only the market types currently offered for that sport. Select Moneyline, Spread, Total, or another available type; the choice remains active while live prices refresh.
+- **BUY / WAIT**: an entry becomes BUY only when the executable ask is below the validated entry ceiling, every signal gate passes, and no elevated execution warning is present.
+- **HOLD / SELL / WATCH EXIT**: saved-position calls use the executable cash-out bid, remaining modeled edge, P/L, spread, and signal quality.
 - **WATCH**: one or more safety gates failed.
 - **PAPER BET**: every configured gate passed; no wager is placed.
 - **Model probability**: consensus probability plus a deliberately capped recent-scoring adjustment.

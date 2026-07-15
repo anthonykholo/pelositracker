@@ -71,13 +71,31 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
         entry_margin = model_probability - quote.ask if model_probability is not None else None
         price_ceiling = max(0.0, model_probability - edge_threshold) if signal else None
         room_to_ceiling = price_ceiling - quote.ask if price_ceiling is not None else None
-        if signal and signal.action == "PAPER_BET" and room_to_ceiling is not None and room_to_ceiling >= 0:
+        risks = _risk_flags(quote, signal, age_seconds)
+        qualified_entry = (signal is not None and signal.action == "PAPER_BET"
+                           and room_to_ceiling is not None and room_to_ceiling >= 0)
+        if qualified_entry and not risks:
             entry_action = "ENTRY WINDOW"
+            recommendation = "BUY"
+            recommendation_reason = (
+                f"Current ask is {room_to_ceiling * 100:.1f} cents below the validated entry ceiling."
+            )
+        elif qualified_entry:
+            entry_action = "WAIT"
+            recommendation = "WAIT"
+            recommendation_reason = f"Execution warning: {risks[0]}"
         elif signal:
             entry_action = "WAIT"
+            recommendation = "WAIT"
+            recommendation_reason = (
+                f"Current ask is {-room_to_ceiling * 100:.1f} cents above the entry ceiling."
+                if room_to_ceiling is not None and room_to_ceiling < 0
+                else "The edge or signal-quality threshold is not currently met."
+            )
         else:
             entry_action = "MARKET ONLY"
-        risks = _risk_flags(quote, signal, age_seconds)
+            recommendation = "WAIT"
+            recommendation_reason = "Wait for an independent sportsbook reference before considering entry."
         views.append({
             "token_id": quote.token_id,
             "market": quote.market,
@@ -95,6 +113,8 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
             "tick_size": quote.tick_size,
             "age_seconds": age_seconds,
             "entry_action": entry_action,
+            "recommendation": recommendation,
+            "recommendation_reason": recommendation_reason,
             "model_probability": model_probability,
             "model_live_prob": signal.model_live_prob if signal else None,
             "entry_margin": entry_margin,
@@ -156,8 +176,15 @@ def position_views(positions: list[dict], quotes: list[Quote], signals: list[Sig
             reasons.extend(signal.reasons[:2])
         else:
             reasons.append("No independent fair-value signal is available; treat this as price/P&L monitoring only.")
+        if action == "CONSIDER CASH":
+            recommendation = "SELL / CASH OUT"
+        elif action == "EXIT WATCH":
+            recommendation = "WATCH EXIT"
+        else:
+            recommendation = "HOLD"
         views.append({**position, "current_bid": bid, "current_ask": quote.ask if quote else None,
                       "spread": spread, "cash_value": cash_value, "unrealized_pnl": pnl,
                       "roi": roi, "model_probability": fair, "remaining_hold_edge": remaining_edge,
-                      "advice": action, "reasons": reasons})
+                      "advice": action, "recommendation": recommendation,
+                      "recommendation_reason": reasons[0], "reasons": reasons})
     return views
