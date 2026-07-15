@@ -37,16 +37,17 @@ impl QuoteInput {
     }
 }
 
-// States are retained on the request for forward-compatibility with a future
-// live model, but Phase 0 deliberately does NOT overlay a game-state term on
-// top of an already-live market line (that double-counts information the
-// market has already priced).
-#[allow(dead_code)]
+// Phase 2a: game state carries fraction_remaining so an INDEPENDENT live
+// win-probability model can be computed. It is used only as a cross-check
+// (and, later, a stale-quote fallback) — never added on top of an already-live
+// market line, which would double-count information the market has priced.
 #[derive(Clone, Debug, Deserialize)]
 struct StateInput {
     home_score: f64,
     away_score: f64,
     observed_at: f64,
+    #[serde(default)]
+    fraction_remaining: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,12 +56,20 @@ struct EvaluateRequest {
     confidence_threshold: f64,
     edge_threshold: f64,
     max_age_seconds: f64,
-    #[allow(dead_code)]
     away_outcome: String,
     quotes: Vec<QuoteInput>,
-    #[allow(dead_code)]
     #[serde(default)]
     states: Vec<StateInput>,
+    #[serde(default)]
+    sport: Option<String>,
+    // Pregame expected home margin prior = -(pregame home spread). None until
+    // Phase 2b captures pregame lines; the model then falls back to pure
+    // current-lead extrapolation (mu = 0).
+    #[serde(default)]
+    pregame_spread: Option<f64>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pregame_total: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -80,6 +89,9 @@ struct SignalOutput {
     devig_method: String,
     overround: f64,
     n_reference_sources: i64,
+    // Phase 2a: independent live win-probability (moneyline only, when game
+    // state is available). null otherwise. A cross-check, not the edge basis.
+    model_live_prob: Option<f64>,
 }
 
 fn clamp(value: f64, low: f64, high: f64) -> f64 {
@@ -107,6 +119,60 @@ fn logit(p: f64) -> f64 {
 
 fn inv_logit(x: f64) -> f64 {
     1.0 / (1.0 + (-x).exp())
+}
+
+/// Abramowitz & Stegun 7.1.26 approximation of erf (max abs error ~1.5e-7).
+fn erf(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t
+            * (-x * x).exp();
+    sign * y
+}
+
+fn normal_cdf(x: f64) -> f64 {
+    0.5 * (1.0 + erf(x / std::f64::consts::SQRT_2))
+}
+
+fn is_moneyline(market: &str) -> bool {
+    matches!(market.to_lowercase().as_str(), "moneyline" | "h2h" | "winner")
+}
+
+/// Standard deviation of the FINAL score margin per sport (points/goals).
+fn sport_margin_sigma(sport: &str) -> f64 {
+    match sport.trim().to_lowercase().as_str() {
+        "basketball" | "nba" => 11.5,
+        "wnba" => 10.5,
+        "ncaab" => 10.5,
+        "football" | "nfl" => 13.5,
+        "ncaaf" => 16.0,
+        "hockey" | "nhl" => 2.2,
+        "baseball" | "mlb" => 4.0,
+        _ => 11.5,
+    }
+}
+
+/// Stern (1994) Brownian-motion live win probability for the HOME side.
+/// Final margin ~ Normal(lead + mu * f, sigma^2 * f), f = fraction remaining,
+/// mu = pregame expected home margin. P(home win) = Phi(E[margin] / sd).
+/// f is floored so the sqrt(f) denominator cannot blow up at the buzzer.
+fn live_winprob(lead: f64, pregame_margin: f64, fraction_remaining: f64, sigma: f64) -> f64 {
+    let f = fraction_remaining.clamp(0.0, 1.0);
+    if f <= 1e-4 {
+        return if lead > 0.0 {
+            0.999
+        } else if lead < 0.0 {
+            0.001
+        } else {
+            0.5
+        };
+    }
+    let expected_margin = lead + pregame_margin * f;
+    normal_cdf(expected_margin / (sigma * f.sqrt())).clamp(0.001, 0.999)
 }
 
 /// Shin (1992/1993) de-vig: recovers "fair" probabilities from a booksum-laden
@@ -231,6 +297,16 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
     }
     let max_age = request.max_age_seconds.max(1.0);
 
+    // Independent live-model inputs (Phase 2a): freshest state with a known
+    // fraction remaining, plus the pregame expected home margin prior.
+    let sport = request.sport.clone().unwrap_or_default();
+    let pregame_margin = request.pregame_spread.map(|s| -s).unwrap_or(0.0);
+    let latest_state = request
+        .states
+        .iter()
+        .filter(|s| s.fraction_remaining.is_some())
+        .max_by(|a, b| a.observed_at.total_cmp(&b.observed_at));
+
     // Keep the freshest quote per (market, outcome, source).
     let mut freshest: BTreeMap<(String, String, String), QuoteInput> = BTreeMap::new();
     for quote in request.quotes {
@@ -267,6 +343,25 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
         if target_quotes.is_empty() {
             continue;
         }
+
+        // Independent live win-probability for this outcome (moneyline only).
+        let model_live: Option<f64> = if is_moneyline(&market) {
+            latest_state.and_then(|st| {
+                st.fraction_remaining.map(|f| {
+                    let lead = st.home_score - st.away_score;
+                    let p_home = live_winprob(lead, pregame_margin, f, sport_margin_sigma(&sport));
+                    let is_away = outcome.eq_ignore_ascii_case("away")
+                        || outcome.eq_ignore_ascii_case(&request.away_outcome);
+                    if is_away {
+                        1.0 - p_home
+                    } else {
+                        p_home
+                    }
+                })
+            })
+        } else {
+            None
+        };
 
         // Per-source de-vigged fair for this outcome.
         let sources: BTreeSet<&str> = same_market
@@ -343,6 +438,14 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
                 own_method,
                 (target_booksum - 1.0) * 100.0
             ));
+            if let (Some(p), Some(st)) = (model_live, latest_state) {
+                reasons.push(format!(
+                    "live model {:.1}% (home lead {:+.0}, {:.0}% game left)",
+                    p * 100.0,
+                    st.home_score - st.away_score,
+                    st.fraction_remaining.unwrap_or(0.0) * 100.0
+                ));
+            }
             signals.push(SignalOutput {
                 event_id: request.event_id.clone(),
                 market,
@@ -358,6 +461,7 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
                 devig_method: own_method.to_string(),
                 overround: target_booksum,
                 n_reference_sources: 0,
+                model_live_prob: model_live,
             });
             continue;
         }
@@ -423,6 +527,15 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
             target_method,
             (target_booksum - 1.0) * 100.0
         ));
+        if let (Some(p), Some(st)) = (model_live, latest_state) {
+            reasons.push(format!(
+                "live model {:.1}% ({:+.1}pp vs market fair), home lead {:+.0}, {:.0}% game left",
+                p * 100.0,
+                (p - fair) * 100.0,
+                st.home_score - st.away_score,
+                st.fraction_remaining.unwrap_or(0.0) * 100.0
+            ));
+        }
 
         let mut blockers = Vec::new();
         if age > max_age {
@@ -472,6 +585,7 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
             devig_method: target_method.to_string(),
             overround: target_booksum,
             n_reference_sources: source_count as i64,
+            model_live_prob: model_live,
         });
     }
 
@@ -524,6 +638,14 @@ mod tests {
     }
 
     fn request(quotes: Vec<QuoteInput>) -> EvaluateRequest {
+        request_with(quotes, Vec::new(), None)
+    }
+
+    fn request_with(
+        quotes: Vec<QuoteInput>,
+        states: Vec<StateInput>,
+        sport: Option<String>,
+    ) -> EvaluateRequest {
         EvaluateRequest {
             event_id: "e".to_string(),
             confidence_threshold: 50.0,
@@ -531,7 +653,19 @@ mod tests {
             max_age_seconds: 20.0,
             away_outcome: "away".to_string(),
             quotes,
-            states: Vec::new(),
+            states,
+            sport,
+            pregame_spread: None,
+            pregame_total: None,
+        }
+    }
+
+    fn state(home: f64, away: f64, frac: f64, at: f64) -> StateInput {
+        StateInput {
+            home_score: home,
+            away_score: away,
+            observed_at: at,
+            fraction_remaining: Some(frac),
         }
     }
 
@@ -582,5 +716,52 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("no independent fair")));
+    }
+
+    #[test]
+    fn normal_cdf_is_sane() {
+        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-6);
+        assert!((normal_cdf(1.96) - 0.975).abs() < 1e-3);
+        assert!((normal_cdf(-1.96) - 0.025).abs() < 1e-3);
+    }
+
+    #[test]
+    fn live_winprob_behaves() {
+        let sigma = 11.5;
+        // Tied at tip-off is a coin flip.
+        assert!((live_winprob(0.0, 0.0, 1.0, sigma) - 0.5).abs() < 1e-9);
+        // A 10-point lead with a quarter left is very safe.
+        assert!(live_winprob(10.0, 0.0, 0.25, sigma) > 0.9);
+        // Trailing by 10 late is very unlikely to win.
+        assert!(live_winprob(-10.0, 0.0, 0.25, sigma) < 0.1);
+        // Monotonic increasing in the lead.
+        assert!(live_winprob(5.0, 0.0, 0.5, sigma) > live_winprob(1.0, 0.0, 0.5, sigma));
+        // At the buzzer, any lead is decisive.
+        assert!(live_winprob(1.0, 0.0, 0.0, sigma) > 0.99);
+        // Pregame favorite prior lifts an early tie above 0.5.
+        assert!(live_winprob(0.0, 6.0, 0.9, sigma) > 0.5);
+    }
+
+    #[test]
+    fn live_model_is_reported_as_a_cross_check() {
+        let now = 1_000.0;
+        let mut quotes = Vec::new();
+        for source in ["A", "B"] {
+            quotes.push(quote(source, "home", 0.60, now));
+            quotes.push(quote(source, "away", 0.40, now));
+        }
+        // Home up 12 with a quarter to go -> live model should be well above 60%.
+        let states = vec![state(70.0, 58.0, 0.25, now)];
+        let results = evaluate(
+            request_with(quotes, states, Some("basketball".to_string())),
+            now,
+        );
+        let home = results.iter().find(|s| s.outcome == "home").unwrap();
+        let away = results.iter().find(|s| s.outcome == "away").unwrap();
+        let hp = home.model_live_prob.expect("home model prob");
+        let ap = away.model_live_prob.expect("away model prob");
+        assert!(hp > 0.85, "home live prob was {hp}");
+        assert!((hp + ap - 1.0).abs() < 1e-6, "home/away should complement");
+        assert!(home.reasons.iter().any(|r| r.contains("live model")));
     }
 }

@@ -44,7 +44,7 @@ async def on_quotes(quotes: list[Quote]):
 def recompute(event_id: str):
     event = store.events[event_id]
     signals = engine.evaluate(event_id, store.quotes[event_id],
-                              store.states[event_id], event.away)
+                              store.states[event_id], event.away, sport=event.sport)
     store.set_signals(event_id, signals)
     if ledger is not None:
         ledger.record_signals(event, signals)

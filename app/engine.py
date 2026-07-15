@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from .gameclock import game_progress
 from .models import GameState, Quote, Signal, classify_source
 
 try:
@@ -25,28 +26,37 @@ class SignalEngine:
         self.max_age_seconds = max_age_seconds
 
     def evaluate(self, event_id: str, quotes: list[Quote], states: list[GameState],
-                 away_outcome: str = "away") -> list[Signal]:
+                 away_outcome: str = "away", sport: str = "") -> list[Signal]:
         request = {
             "event_id": event_id,
             "confidence_threshold": self.confidence_threshold,
             "edge_threshold": self.edge_threshold,
             "max_age_seconds": self.max_age_seconds,
             "away_outcome": away_outcome,
+            "sport": sport or None,
+            "pregame_spread": None,
+            "pregame_total": None,
             "quotes": [
                 self._quote_payload(q)
                 for q in quotes
             ],
             "states": [
-                {
-                    "home_score": s.home_score,
-                    "away_score": s.away_score,
-                    "observed_at": s.observed_at.timestamp(),
-                }
+                self._state_payload(s, sport)
                 for s in states
             ],
         }
         results = json.loads(evaluate_json(json.dumps(request, separators=(",", ":"))))
         return [Signal(**result) for result in results]
+
+    @staticmethod
+    def _state_payload(s: GameState, sport: str) -> dict:
+        _, fraction_remaining = game_progress(sport, s.period, s.clock)
+        return {
+            "home_score": s.home_score,
+            "away_score": s.away_score,
+            "observed_at": s.observed_at.timestamp(),
+            "fraction_remaining": fraction_remaining,
+        }
 
     @staticmethod
     def _quote_payload(q: Quote) -> dict:

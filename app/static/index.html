@@ -352,7 +352,7 @@
           <div class="fig" title="The engine's estimated probability that this outcome wins">
             <div class="key">Model probability</div>
             <div class="value">${pct(signal.model_probability)}</div>
-            <div class="hint">Estimated chance</div>
+            <div class="hint">${signal.model_live_prob != null ? `Live model ${pct(signal.model_live_prob)}` : "Estimated chance"}</div>
           </div>
           <div class="fig" title="Model probability minus the best executable market probability">
             <div class="key">Estimated edge</div>

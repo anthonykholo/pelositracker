@@ -112,6 +112,8 @@ class Signal:
     devig_method: str = ""
     overround: float = 1.0
     n_reference_sources: int = 0
+    # Phase 2a: independent live win-probability (moneyline only), or None.
+    model_live_prob: float | None = None
 
 
 def as_json(value: Any) -> Any:
