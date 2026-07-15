@@ -171,14 +171,26 @@
   function metricTile(key,value,cls="",sub="") { return `<div class="mtile"><div class="k">${key}</div><div class="v ${cls}">${value}</div>${sub?`<div class="sub2">${sub}</div>`:""}</div>`; }
   function reliabilityView(bins) { if(!bins?.length)return "";const columns=bins.map(bin=>`<div class="rbin" title="predicted ${pct(bin.mean_predicted)} · actual ${pct(bin.empirical_rate)} · n=${bin.count}"><div class="rtrack"><div class="remp" style="height:${(bin.empirical_rate*100).toFixed(1)}%"></div><div class="rpred" style="bottom:${(bin.mean_predicted*100).toFixed(1)}%"></div></div><div class="rlabel">${Math.round(bin.lo*100)}</div></div>`).join("");return `<div class="reliability">${columns}</div><div class="metrics-sub">Bar = actual win rate · line = predicted probability</div>`; }
   async function refreshMetrics() { const body=document.querySelector("#metrics-body"),sub=document.querySelector("#metrics-sub");try{const response=await fetch("/api/metrics");if(!response.ok)return;const m=await response.json();if(!m?.n_bets){sub.textContent="";body.innerHTML='<div class="metrics-empty">No paper bets logged yet. CLV and calibration appear after qualified signals and event closes.</div>';return}const clv=m.clv||{},model=m.model||{},base=m.market_baseline||{};sub.textContent=`${m.n_bets} paper bet(s) · ${m.n_settled} settled`;const tiles=[metricTile("Beat close",clv.beat_close_rate==null?"—":pct(clv.beat_close_rate),clv.beat_close_rate>=.5?"good":"bad",clv.n?`n=${clv.n}`:"awaiting closes"),metricTile("Mean CLV",clv.mean_clv==null?"—":signedCents(clv.mean_clv),clv.mean_clv>=0?"good":"bad","vs closing fair"),metricTile("Settled",String(m.n_settled),"","moneyline"),metricTile("Model Brier",model.brier==null?"—":model.brier.toFixed(3),model.brier!=null&&base.brier!=null&&model.brier<base.brier?"good":"",base.brier==null?"awaiting settle":`market ${base.brier.toFixed(3)}`)];if(model.log_loss!=null)tiles.push(metricTile("Log loss",model.log_loss.toFixed(3)));if(model.ece!=null)tiles.push(metricTile("ECE",model.ece.toFixed(3),"","calibration gap"));body.innerHTML=`<div class="metric-tiles">${tiles.join("")}</div>`+reliabilityView(m.reliability)}catch{}}
+  function renderEvents(events) {
+    // Don't stomp a position form the user is actively editing.
+    if (document.activeElement?.closest("[data-save-position]")) return;
+    const root=document.querySelector("#events");
+    const openDetails=new Set([...root.querySelectorAll("details[open][data-detail-key]")].map(d=>d.dataset.detailKey));
+    root.innerHTML=events.length?`<div class="stack">${events.map(e=>eventCard(e,openDetails)).join("")}</div>`:'<div class="panel empty"><b>No events yet</b>Paste a Polymarket event link to begin.</div>';
+  }
   async function refresh() {
     if (refreshInFlight || document.activeElement?.closest("[data-save-position]")) return;
-    refreshInFlight=true; const root=document.querySelector("#events");
-    const openDetails=new Set([...root.querySelectorAll("details[open][data-detail-key]")].map(d=>d.dataset.detailKey));
-    try { const response=await fetch("/api/events"); if(!response.ok) throw new Error(); const events=await response.json();
-      root.innerHTML=events.length?`<div class="stack">${events.map(e=>eventCard(e,openDetails)).join("")}</div>`:'<div class="panel empty"><b>No events yet</b>Paste a Polymarket event link to begin.</div>';
-    } catch { if(!root.children.length) root.innerHTML='<div class="panel empty"><b>Dashboard disconnected</b>Check that the server is running.</div>'; }
+    refreshInFlight=true;
+    try { const response=await fetch("/api/events"); if(!response.ok) throw new Error(); renderEvents(await response.json()); }
+    catch { const root=document.querySelector("#events"); if(!root.children.length) root.innerHTML='<div class="panel empty"><b>Dashboard disconnected</b>Check that the server is running.</div>'; }
     finally { refreshInFlight=false; }
+  }
+  function startStream() {
+    // Real-time push: render the instant the server's snapshot changes.
+    let source;
+    try { source = new EventSource("/api/stream"); } catch { return; }
+    source.onmessage = event => { if(!event.data) return; try { renderEvents(JSON.parse(event.data)); refreshMetrics(); } catch {} };
+    // EventSource auto-reconnects on error; the slow poll below is the backstop.
   }
 
   document.querySelector("#form").addEventListener("submit",async event=>{event.preventDefault();const form=event.currentTarget,button=document.querySelector("#submit-event"),box=document.querySelector("#form-error");
@@ -194,7 +206,7 @@
     if(removeEvent){removeEvent.disabled=true;try{const response=await fetch(`/api/events/${encodeURIComponent(removeEvent.dataset.removeEvent)}`,{method:"DELETE"});if(response.ok){await refresh();await refreshMetrics()}}catch{}finally{removeEvent.disabled=false}}
     if(removePosition){removePosition.disabled=true;try{const response=await fetch(`/api/events/${encodeURIComponent(removePosition.dataset.eventId)}/positions/${encodeURIComponent(removePosition.dataset.tokenId)}`,{method:"DELETE"});if(response.ok)await refresh()}catch{}finally{removePosition.disabled=false}}});
   fetch("/api/config").then(r=>r.json()).then(c=>document.querySelector("#config").textContent=`Quality ≥ ${c.confidence_threshold} · Required edge ≥ ${(c.edge_threshold*100).toFixed(1)}%`).catch(()=>document.querySelector("#config").textContent="Thresholds unavailable");
-  refresh();refreshMetrics();setInterval(refresh,2000);setInterval(refreshMetrics,5000);
+  refresh();refreshMetrics();startStream();setInterval(refresh,10000);setInterval(refreshMetrics,5000);
 </script>
 </body>
 </html>

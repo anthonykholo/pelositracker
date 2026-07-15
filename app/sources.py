@@ -428,7 +428,9 @@ async def odds_api_poll(event: Event, emit: Callable[[list[Quote]], Awaitable[No
     key = os.getenv("THE_ODDS_API_KEY")
     if not key or not event.odds_api_sport:
         return
-    interval = max(1.0, float(os.getenv("ODDS_POLL_SECONDS", "45")))
+    # Lower interval = fresher sportsbook lines but more (paid) API credits.
+    # Polymarket streams in real time regardless; this only paces The Odds API.
+    interval = max(1.0, float(os.getenv("ODDS_POLL_SECONDS", "20")))
     url, params = odds_api_request(event, key)
     async with httpx.AsyncClient(timeout=15) as client:
         while True:

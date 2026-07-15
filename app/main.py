@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,17 @@ engine = SignalEngine(float(os.getenv("SIGNAL_CONFIDENCE_THRESHOLD", "72")),
 tasks: dict[str, list[asyncio.Task]] = {}
 _finalized: set[str] = set()
 _pregame: dict[str, dict] = {}  # event_id -> {"spread": home point, "total": line}, captured near tip
+_subscribers: set[asyncio.Queue] = set()  # SSE clients for real-time dashboard pushes
+
+
+def _notify_subscribers() -> None:
+    """Wake every SSE client that a snapshot changed (coalesced per client)."""
+    for queue in list(_subscribers):
+        if queue.empty():
+            try:
+                queue.put_nowait(1)
+            except asyncio.QueueFull:
+                pass
 _FINAL_STATUSES = {"final", "ended", "closed", "complete", "finished"}
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -75,6 +87,7 @@ def recompute(event_id: str) -> list:
 
 async def record(event_id: str) -> None:
     signals = recompute(event_id)
+    _notify_subscribers()  # push the fresh snapshot to the dashboard immediately
     event = store.events.get(event_id)
     # Ledger commits fsync to disk; keep that off the event loop.
     if ledger is not None and event is not None and signals:
@@ -170,6 +183,32 @@ async def list_events():
     return [event_view(event.id) for event in store.events.values()]
 
 
+def _events_snapshot_sse() -> str:
+    payload = json.dumps([event_view(event.id) for event in store.events.values()], default=str)
+    return f"data: {payload}\n\n"
+
+
+@app.get("/api/stream")
+async def stream():
+    """Server-Sent Events: push the events snapshot the instant data changes."""
+    async def generator():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        _subscribers.add(queue)
+        try:
+            yield _events_snapshot_sse()  # initial state
+            while True:
+                try:
+                    await asyncio.wait_for(queue.get(), timeout=15)
+                    yield _events_snapshot_sse()
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"  # keep the connection warm
+        finally:
+            _subscribers.discard(queue)
+
+    return StreamingResponse(generator(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 def event_view(event_id: str):
     event = store.events.get(event_id)
     if not event:
@@ -248,6 +287,7 @@ async def add_event(payload: EventIn):
     if event.odds_api_sport:
         group.append(asyncio.create_task(odds_api_poll(event, on_quotes)))
     tasks[event.id] = group
+    _notify_subscribers()
     return event_view(event.id)
 
 
@@ -263,6 +303,7 @@ async def save_position(event_id: str, payload: PositionIn):
         raise HTTPException(400, "That selection is not available for this event")
     ledger.upsert_position(event_id, payload.token_id, payload.market, payload.outcome,
                            payload.shares, payload.avg_entry_price)
+    _notify_subscribers()
     return event_view(event_id)
 
 
@@ -270,6 +311,7 @@ async def save_position(event_id: str, payload: PositionIn):
 async def remove_position(event_id: str, token_id: str):
     if ledger is None or not ledger.delete_position(event_id, token_id):
         raise HTTPException(404, "position not found")
+    _notify_subscribers()
 
 
 @app.get("/api/metrics")
@@ -301,6 +343,7 @@ async def delete_event(event_id: str):
     store.states.pop(event_id, None)
     store.quotes.pop(event_id, None)
     store.signals.pop(event_id, None)
+    _notify_subscribers()
 
 
 @app.post("/api/demo", status_code=201)
