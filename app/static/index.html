@@ -255,6 +255,26 @@
       .live-dot { animation: none; }
       .bar i { transition: none; }
     }
+
+    /* truth loop: CLV & calibration */
+    .metrics-panel { padding: 18px; margin-bottom: 20px; }
+    .metrics-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .metrics-head .section-title { margin: 0; }
+    .metrics-sub { color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; }
+    .metric-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 12px; margin-top: 14px; }
+    .mtile { padding: 11px 13px; background: var(--panel-2); border-left: 2px solid var(--line-bright); }
+    .mtile .k { color: var(--muted); font-family: var(--mono); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+    .mtile .v { margin-top: 4px; font-family: var(--mono); font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .mtile .v.good { color: var(--cyan); }
+    .mtile .v.bad { color: var(--no); }
+    .mtile .sub2 { margin-top: 2px; color: var(--faint); font-family: var(--mono); font-size: 10px; }
+    .metrics-empty { margin-top: 12px; color: var(--muted); font-family: var(--mono); font-size: 12px; letter-spacing: .03em; }
+    .reliability { display: flex; align-items: flex-end; gap: 6px; margin-top: 18px; flex-wrap: wrap; }
+    .rbin { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .rtrack { position: relative; width: 26px; height: 60px; background: var(--panel-2); border: 1px solid var(--line); }
+    .remp { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(255, 77, 46, .55); }
+    .rpred { position: absolute; left: -1px; right: -1px; height: 2px; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+    .rlabel { color: var(--faint); font-family: var(--mono); font-size: 9px; }
   </style>
 </head>
 <body>
@@ -269,6 +289,14 @@
       </div>
       <div class="config" id="config">Loading thresholds…</div>
     </header>
+
+    <section class="panel metrics-panel" id="metrics" aria-labelledby="metrics-heading">
+      <div class="metrics-head">
+        <h2 class="section-title" id="metrics-heading">Truth loop · CLV &amp; calibration</h2>
+        <span class="metrics-sub" id="metrics-sub"></span>
+      </div>
+      <div id="metrics-body" aria-live="polite"></div>
+    </section>
 
     <div class="grid">
       <aside class="panel panel-pad">
@@ -434,9 +462,73 @@
       if (!button) return;
       button.disabled = true;
       const response = await fetch(`/api/events/${encodeURIComponent(button.dataset.removeEvent)}`, { method: "DELETE" });
-      if (response.ok) await refresh();
+      if (response.ok) { await refresh(); refreshMetrics(); }
       else button.disabled = false;
     });
+
+    function metricTile(key, value, cls, sub) {
+      return `<div class="mtile"><div class="k">${key}</div>` +
+        `<div class="v${cls ? " " + cls : ""}">${value}</div>` +
+        `${sub ? `<div class="sub2">${sub}</div>` : ""}</div>`;
+    }
+
+    function reliabilityView(bins) {
+      if (!bins || !bins.length) return "";
+      const cols = bins.map(bin => `<div class="rbin" title="predicted ${pct(bin.mean_predicted)} · actual ${pct(bin.empirical_rate)} · n=${bin.count}">
+          <div class="rtrack">
+            <div class="remp" style="height:${(bin.empirical_rate * 100).toFixed(1)}%"></div>
+            <div class="rpred" style="bottom:${(bin.mean_predicted * 100).toFixed(1)}%"></div>
+          </div>
+          <div class="rlabel">${Math.round(bin.lo * 100)}</div>
+        </div>`).join("");
+      return `<div class="reliability">${cols}</div>` +
+        `<div class="metrics-sub" style="margin-top:8px">Reliability by predicted probability — bar = actual win rate, line = predicted. Aligned = calibrated.</div>`;
+    }
+
+    async function refreshMetrics() {
+      const body = document.querySelector("#metrics-body");
+      const sub = document.querySelector("#metrics-sub");
+      let m;
+      try {
+        const response = await fetch("/api/metrics");
+        if (!response.ok) return;
+        m = await response.json();
+      } catch (error) { return; }
+      if (!m || !m.n_bets) {
+        sub.textContent = "";
+        body.innerHTML = '<div class="metrics-empty">No paper bets logged yet — CLV and calibration appear once PAPER_BET signals fire and events finalize.</div>';
+        return;
+      }
+      const clv = m.clv || {}, model = m.model || {}, base = m.market_baseline || {};
+      sub.textContent = `${m.n_bets} paper bet(s) · ${m.n_settled} settled`;
+      const tiles = [];
+      if (clv.beat_close_rate != null) {
+        tiles.push(metricTile("Beat close", `${(clv.beat_close_rate * 100).toFixed(0)}%`,
+          clv.beat_close_rate >= 0.5 ? "good" : "bad", `n=${clv.n}`));
+      } else {
+        tiles.push(metricTile("Beat close", "—", "", "awaiting closes"));
+      }
+      tiles.push(clv.mean_clv != null
+        ? metricTile("Mean CLV", signedPct(clv.mean_clv), clv.mean_clv >= 0 ? "good" : "bad", "vs closing fair")
+        : metricTile("Mean CLV", "—", ""));
+      tiles.push(metricTile("Settled", String(m.n_settled), "", "moneyline"));
+      if (model.brier != null && base.brier != null) {
+        tiles.push(metricTile("Model Brier", model.brier.toFixed(3),
+          model.brier < base.brier ? "good" : "bad", `mkt ${base.brier.toFixed(3)}`));
+      } else if (model.brier != null) {
+        tiles.push(metricTile("Model Brier", model.brier.toFixed(3), ""));
+      } else {
+        tiles.push(metricTile("Model Brier", "—", "", "awaiting settle"));
+      }
+      if (model.log_loss != null) {
+        tiles.push(metricTile("Log loss", model.log_loss.toFixed(3), "",
+          base.log_loss != null ? `mkt ${base.log_loss.toFixed(3)}` : ""));
+      }
+      if (model.ece != null) {
+        tiles.push(metricTile("ECE", model.ece.toFixed(3), "", "calibration gap"));
+      }
+      body.innerHTML = `<div class="metric-tiles">${tiles.join("")}</div>` + reliabilityView(m.reliability);
+    }
 
     fetch("/api/config")
       .then(response => response.json())
@@ -447,7 +539,9 @@
       .catch(() => { document.querySelector("#config").textContent = "Thresholds unavailable"; });
 
     refresh();
+    refreshMetrics();
     setInterval(refresh, 1000);
+    setInterval(refreshMetrics, 5000);
   </script>
 </body>
 </html>
