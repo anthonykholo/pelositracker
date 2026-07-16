@@ -133,7 +133,12 @@ async def record(event_id: str) -> None:
     if ledger is not None and event is not None and signals:
         await asyncio.to_thread(ledger.record_signals, event, signals)
     if account_book is not None and event is not None and signals:
-        await asyncio.to_thread(account_book.place, event, signals)
+        placed_bets = await asyncio.to_thread(account_book.place, event, signals)
+        if placed_bets:
+            from .notify import notify_webhook
+            for p in placed_bets:
+                if p.get("webhook_url"):
+                    asyncio.create_task(notify_webhook(p["webhook_url"], p))
 
 
 def _winner_labels(event: Event, home_score: float, away_score: float) -> set[str]:
@@ -250,6 +255,7 @@ class StrategyIn(BaseModel):
     kelly_multiplier: float = 1.0
     flat_stake: float = 100.0
     start_bankroll: float = 10000.0
+    webhook_url: str = ""
 
 
 class ConfigIn(BaseModel):
@@ -476,7 +482,8 @@ async def create_account(payload: StrategyIn):
         sizing=payload.sizing,
         kelly_multiplier=payload.kelly_multiplier,
         flat_stake=payload.flat_stake,
-        start_bankroll=payload.start_bankroll
+        start_bankroll=payload.start_bankroll,
+        webhook_url=payload.webhook_url
     )
     account_book.seed([strat])
     return {"status": "ok"}

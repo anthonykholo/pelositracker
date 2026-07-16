@@ -69,6 +69,7 @@ class Strategy:
     flat_pct: float = 0.02
     max_stake_pct: float = 0.10
     start_bankroll: float = 10_000.0
+    webhook_url: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -197,10 +198,10 @@ class AccountBook:
                 )
             self._conn.commit()
 
-    def place(self, event: Event, signals: list[Signal]) -> int:
+    def place(self, event: Event, signals: list[Signal]) -> list[dict]:
         """Let every account bet the signals that clear its own bar (once each)."""
         now = _now()
-        placed = 0
+        placed_bets = []
         with self._lock:
             accounts = self._conn.execute("SELECT name, strategy, bankroll FROM accounts").fetchall()
             for account in accounts:
@@ -223,12 +224,22 @@ class AccountBook:
                     )
                     if cur.rowcount:
                         bankroll -= stake
-                        placed += 1
+                        placed_bets.append({
+                            "bot_name": account["name"],
+                            "webhook_url": strategy.webhook_url,
+                            "event_name": event.name,
+                            "market": signal.market,
+                            "outcome": signal.outcome,
+                            "action": "PAPER_BET",
+                            "stake": stake,
+                            "entry_price": signal.market_probability,
+                            "edge": signal.edge,
+                        })
                         self._conn.execute("UPDATE accounts SET bankroll=? WHERE name=?",
                                            (bankroll, account["name"]))
-            if placed:
+            if placed_bets:
                 self._conn.commit()
-        return placed
+        return placed_bets
 
     def settle(self, event: Event, home_score: float, away_score: float) -> int:
         """Grade every open bet on the event and credit each account's bankroll."""

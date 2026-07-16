@@ -188,6 +188,10 @@
           </select>
         </div>
         <div style="grid-column: 1 / -1">
+          <label>Discord/Slack Webhook URL (Optional)</label>
+          <input id="bot-webhook" name="webhook_url" type="url" placeholder="https://discord.com/api/webhooks/...">
+        </div>
+        <div style="grid-column: 1 / -1">
           <button class="primary" type="submit" style="margin-top:0">Launch Bot</button>
         </div>
       </form>
@@ -458,7 +462,8 @@
       sizing: sizing,
       kelly_multiplier: sizing === "kelly" ? mult : 1.0,
       flat_stake: sizing === "flat" ? mult : 100.0,
-      start_bankroll: 10000.0
+      start_bankroll: 10000.0,
+      webhook_url: form.querySelector("#bot-webhook").value || ""
     };
     try {
       const r = await fetch("/api/accounts", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(payload) });
