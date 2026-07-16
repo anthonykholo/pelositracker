@@ -22,7 +22,7 @@ from .advice import market_views, position_views
 from .ledger import Ledger
 from .lines import pregame_priors
 from .models import Event, GameState, Quote, as_json
-from .sources import (demo_stream, extract_polymarket_slug, infer_polymarket_event,
+from .sources import (extract_polymarket_slug, infer_polymarket_event,
                       match_odds_api_event, odds_api_poll, polymarket_event,
                       polymarket_market_stream, polymarket_sports_events,
                       polymarket_sports_stream, sports_game_status)
