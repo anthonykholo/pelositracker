@@ -47,8 +47,18 @@ _subscribers: set[asyncio.Queue] = set()  # SSE clients for real-time dashboard 
 _sports_status: dict[str, dict] = {}  # latest public Polymarket sport_result by event slug
 _config_state = {"auto_monitor": False}
 
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+_auth_users_env = os.getenv("AUTHORIZED_USERS")
+if _auth_users_env:
+    AUTHORIZED_USERS = {}
+    for pair in _auth_users_env.split(","):
+        if ":" in pair:
+            u, p = pair.split(":", 1)
+            AUTHORIZED_USERS[u.strip()] = p.strip()
+else:
+    AUTHORIZED_USERS = {
+        os.getenv("ADMIN_USERNAME", "admin"): os.getenv("ADMIN_PASSWORD", "admin")
+    }
+
 AUTH_TOKEN = secrets.token_urlsafe(32)
 
 async def verify_auth(request: Request):
@@ -274,9 +284,10 @@ async def watch():
 
 @app.post("/api/login")
 async def login(response: Response, username: str = Form(...), password: str = Form(...)):
-    if secrets.compare_digest(username, ADMIN_USERNAME) and secrets.compare_digest(password, ADMIN_PASSWORD):
-        response.set_cookie(key="auth_token", value=AUTH_TOKEN, httponly=True, samesite="strict")
-        return {"status": "ok"}
+    for auth_u, auth_p in AUTHORIZED_USERS.items():
+        if secrets.compare_digest(username, auth_u) and secrets.compare_digest(password, auth_p):
+            response.set_cookie(key="auth_token", value=AUTH_TOKEN, httponly=True, samesite="strict")
+            return {"status": "ok"}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
