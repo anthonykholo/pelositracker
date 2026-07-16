@@ -624,6 +624,21 @@ async def odds_api_poll(event: Event, emit: Callable[[list[Quote]], Awaitable[No
     key = os.getenv("THE_ODDS_API_KEY")
     if not key or not event.odds_api_sport:
         return
+        
+    if not event.odds_api_event_id:
+        try:
+            matched = await match_odds_api_event(event.odds_api_sport, event.name)
+            if matched:
+                event.odds_api_event_id = str(matched["id"])
+                event.home = str(matched["home_team"])
+                event.away = str(matched["away_team"])
+        except Exception as exc:
+            logger.warning("Failed to match Odds API event: %s", exc)
+            
+    if not event.odds_api_event_id:
+        logger.warning("Could not resolve Odds API event ID for %s", event.name)
+        return
+
     # Lower interval = fresher sportsbook lines but more (paid) API credits.
     # Polymarket streams in real time regardless; this only paces The Odds API.
     interval = max(1.0, float(os.getenv("ODDS_POLL_SECONDS", "20")))

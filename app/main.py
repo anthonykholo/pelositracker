@@ -423,15 +423,7 @@ async def add_event(payload: EventIn):
             "away": payload.away or inferred["away"],
             "odds_api_sport": payload.odds_api_sport or inferred["odds_api_sport"],
         })
-        if values.get("odds_api_sport") and not values.get("odds_api_event_id"):
-            try:
-                matched = await match_odds_api_event(values["odds_api_sport"], values["name"])
-            except Exception:
-                matched = None
-            if matched:
-                values.update({"odds_api_event_id": str(matched["id"]),
-                               "home": str(matched["home_team"]),
-                               "away": str(matched["away_team"])})
+        # We now defer match_odds_api_event to the background polling task so the POST returns instantly.
     required = ("name", "sport", "home", "away")
     missing = [field for field in required if not values.get(field)]
     if missing:

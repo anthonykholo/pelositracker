@@ -542,12 +542,21 @@
   }
   async function monitorGame(slug,row) {
     const box=document.querySelector("#form-error");
-    if(row)row.setAttribute("aria-disabled","true");box.hidden=true;
+    let addBtn = null;
+    if(row){
+      row.setAttribute("aria-disabled","true");
+      addBtn = row.querySelector(".g-add");
+      if(addBtn) addBtn.textContent = "Adding...";
+    }
+    box.hidden=true;
     try{const r=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({polymarket_url:`https://polymarket.com/event/${slug}`})});
       const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.detail||`Could not monitor (${r.status})`);await refresh();await refreshMetrics();
       document.querySelector('[data-tab="tab-live"]').click();
     }
-    catch(error){box.textContent=error.message;box.hidden=false}
+    catch(error){
+      box.textContent=error.message;box.hidden=false;
+      if(addBtn) addBtn.textContent = "+ Monitor";
+    }
     finally{if(row)row.removeAttribute("aria-disabled")}
   }
   document.querySelector("#discover-list").addEventListener("click",e=>{const row=e.target.closest("[data-slug]");if(row&&row.getAttribute("aria-disabled")!=="true")monitorGame(row.dataset.slug,row)});
