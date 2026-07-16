@@ -28,12 +28,111 @@
     
     /* Login Overlay */
     #login-overlay {
-      position: fixed; inset: 0; background: var(--bg); z-index: 1000;
+      position: fixed; inset: 0; z-index: 1000;
+      background: radial-gradient(circle at 50% -20%, rgba(41,231,214,0.15), var(--bg) 60%);
       display: flex; align-items: center; justify-content: center;
       transition: opacity 1.5s cubic-bezier(0.16, 1, 0.3, 1), filter 1.5s ease, transform 1.5s ease;
+      backdrop-filter: blur(10px);
     }
     #login-overlay.dissolve { opacity: 0; filter: blur(30px); transform: scale(1.1); pointer-events: none; }
-    .login-box { background: var(--panel); border: 1px solid var(--cyan); padding: 40px; width: 360px; box-shadow: 0 0 40px rgba(41,231,214,0.1); position: relative; z-index: 2; }
+    
+    .login-box { 
+      background: rgba(12, 15, 19, 0.6);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(41,231,214,0.2); 
+      border-radius: 16px;
+      padding: 48px 40px; 
+      width: 380px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(41,231,214,0.1) inset; 
+      position: relative; 
+      z-index: 2; 
+    }
+    .login-box h1 {
+      color: #fff;
+      font-size: 28px;
+      text-align: center;
+      margin-bottom: 4px;
+      text-shadow: 0 0 20px rgba(41,231,214,0.5);
+      position: relative;
+    }
+    .login-box h1::before, .login-box h1::after {
+      content: attr(data-text);
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: transparent;
+      color: #fff;
+    }
+    .login-box h1::before {
+      left: 2px;
+      text-shadow: -1px 0 var(--red);
+      clip-path: inset(10% 0 60% 0);
+      animation: glitch-anim-1 2s infinite linear alternate-reverse;
+    }
+    .login-box h1::after {
+      left: -2px;
+      text-shadow: -1px 0 var(--cyan);
+      clip-path: inset(80% 0 5% 0);
+      animation: glitch-anim-2 3s infinite linear alternate-reverse;
+    }
+    @keyframes glitch-anim-1 {
+      0% { clip-path: inset(20% 0 80% 0); }
+      20% { clip-path: inset(60% 0 10% 0); }
+      40% { clip-path: inset(10% 0 50% 0); }
+      60% { clip-path: inset(80% 0 5% 0); }
+      80% { clip-path: inset(30% 0 40% 0); }
+      100% { clip-path: inset(50% 0 30% 0); }
+    }
+    @keyframes glitch-anim-2 {
+      0% { clip-path: inset(10% 0 60% 0); }
+      20% { clip-path: inset(30% 0 20% 0); }
+      40% { clip-path: inset(70% 0 10% 0); }
+      60% { clip-path: inset(40% 0 50% 0); }
+      80% { clip-path: inset(80% 0 5% 0); }
+      100% { clip-path: inset(5% 0 80% 0); }
+    }
+    .login-box h1 span { color: var(--cyan); }
+    .login-box p {
+      color: var(--muted);
+      text-align: center;
+      font-size: 11px;
+      margin-bottom: 32px;
+      font-family: var(--mono);
+      letter-spacing: 0.15em;
+    }
+    .login-box label {
+      color: var(--cyan);
+      margin: 16px 0 6px;
+      font-size: 10px;
+    }
+    .login-box input {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 16px;
+      transition: all 0.2s;
+    }
+    .login-box input:focus {
+      background: rgba(0,0,0,0.5);
+      border-color: var(--cyan);
+      box-shadow: 0 0 15px rgba(41,231,214,0.2);
+    }
+    .login-box button {
+      margin-top: 28px;
+      background: linear-gradient(135deg, var(--cyan), #1b9b90);
+      color: #000;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 13px;
+      clip-path: none;
+      box-shadow: 0 4px 15px rgba(41,231,214,0.3);
+      transition: all 0.2s;
+    }
+    .login-box button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(41,231,214,0.4);
+      background: linear-gradient(135deg, #3ffceb, var(--cyan));
+    }
     
     .panel,.event,.empty{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.015),transparent),var(--panel);border:1px solid var(--line)}
     .panel:before,.event:before{content:"";position:absolute;top:-1px;left:-1px;width:13px;height:13px;border-left:1px solid var(--coral);border-top:1px solid var(--coral)}
@@ -96,14 +195,15 @@
 <body>
 <div id="login-overlay">
   <div class="login-box">
-    <h1 style="color:var(--cyan); margin-bottom:24px; text-align:center">PelosiTracker</h1>
+    <h1 data-text="PelosiAlpha">Pelosi<span>Alpha</span></h1>
+    <p>SECURE TERMINAL ACCESS</p>
     <div id="login-error" class="error" hidden></div>
     <form id="login-form">
       <label>Admin Username</label>
-      <input type="text" name="username" required>
+      <input type="text" name="username" required placeholder="Enter username">
       <label>Admin Password</label>
-      <input type="password" name="password" required>
-      <button type="submit">Authenticate</button>
+      <input type="password" name="password" required placeholder="••••••••">
+      <button type="submit">Authenticate Session</button>
     </form>
   </div>
 </div>
