@@ -110,6 +110,24 @@
       </form>
       <button class="ghost" id="demo" type="button">Launch paper demo</button>
       <p class="note">Only markets accepting orders with an executable ask are shown. Availability and legality vary by location. Entry, hold, and cash guidance is heuristic research output—not a guarantee or instruction to wager.</p>
+      <div class="browse" style="margin-top: 24px; padding-top: 16px; border-top: 1px dashed var(--line);">
+        <h2 class="title">Create Custom Bot</h2>
+        <div class="error" id="bot-error" role="alert" hidden></div>
+        <form id="bot-form">
+          <label for="bot-name">Bot Name</label>
+          <input id="bot-name" name="name" required placeholder="My Custom Bot">
+          <label for="bot-edge">Edge Threshold (%)</label>
+          <input id="bot-edge" name="edge_threshold" type="number" step="0.1" required placeholder="3.0">
+          <label for="bot-sizing">Sizing Strategy</label>
+          <select id="bot-sizing" name="sizing" style="width:100%;padding:10px 11px;background:var(--bg);border:1px solid var(--bright);color:var(--text);font:13px var(--mono)">
+            <option value="kelly">Kelly Fraction</option>
+            <option value="flat">Flat Stake</option>
+          </select>
+          <label for="bot-multiplier">Kelly Multiplier / Flat Stake ($)</label>
+          <input id="bot-multiplier" name="multiplier" type="number" step="0.1" required placeholder="1.0 or 100">
+          <button class="ghost" style="margin-top: 14px;" type="submit">Launch Bot</button>
+        </form>
+      </div>
       <div class="browse">
         <div class="browse-head">
           <h2 class="title">Live Polymarket games</h2>
@@ -127,6 +145,14 @@
     </section>
   </div>
 </main>
+<dialog id="bot-modal" class="panel pad" style="max-width:600px; width:90%; border:1px solid var(--cyan); background:var(--panel); color:var(--text); margin:auto; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); max-height:80vh; overflow-y:auto; z-index:99;">
+  <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px; border-bottom:1px solid var(--line); padding-bottom:8px">
+    <h2 class="title" id="bot-modal-title" style="margin:0; color:var(--cyan)">Bot Activity</h2>
+    <button class="ghost" style="padding:4px 8px; font-size:10px; width:auto; margin:0;" onclick="document.querySelector('#bot-modal').close()">Close</button>
+  </div>
+  <div id="bot-modal-content" style="display:flex; flex-direction:column; gap:8px">Loading...</div>
+</dialog>
+<style>dialog::backdrop { background: rgba(0,0,0,0.7); }</style>
 <script>
   const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);
   const pct = value => value == null ? "—" : `${(value * 100).toFixed(1)}%`;
@@ -246,7 +272,35 @@
   function metricTile(key,value,cls="",sub="") { return `<div class="mtile"><div class="k">${key}</div><div class="v ${cls}">${value}</div>${sub?`<div class="sub2">${sub}</div>`:""}</div>`; }
   function reliabilityView(bins) { if(!bins?.length)return "";const columns=bins.map(bin=>`<div class="rbin" title="predicted ${pct(bin.mean_predicted)} · actual ${pct(bin.empirical_rate)} · n=${bin.count}"><div class="rtrack"><div class="remp" style="height:${(bin.empirical_rate*100).toFixed(1)}%"></div><div class="rpred" style="bottom:${(bin.mean_predicted*100).toFixed(1)}%"></div></div><div class="rlabel">${Math.round(bin.lo*100)}</div></div>`).join("");return `<div class="reliability">${columns}</div><div class="metrics-sub">Bar = actual win rate · line = predicted probability</div>`; }
   async function refreshMetrics() { const body=document.querySelector("#metrics-body"),sub=document.querySelector("#metrics-sub");try{const response=await fetch("/api/metrics");if(!response.ok)return;const m=await response.json();if(!m?.n_bets){sub.textContent="";body.innerHTML='<div class="metrics-empty">No paper bets logged yet. CLV and calibration appear after qualified signals and event closes.</div>';return}const clv=m.clv||{},model=m.model||{},base=m.market_baseline||{};sub.textContent=`${m.n_bets} paper bet(s) · ${m.n_settled} settled`;const tiles=[metricTile("Beat close",clv.beat_close_rate==null?"—":pct(clv.beat_close_rate),clv.beat_close_rate>=.5?"good":"bad",clv.n?`n=${clv.n}`:"awaiting closes"),metricTile("Mean CLV",clv.mean_clv==null?"—":signedCents(clv.mean_clv),clv.mean_clv>=0?"good":"bad","vs closing fair"),metricTile("Settled",String(m.n_settled),"","moneyline"),metricTile("Model Brier",model.brier==null?"—":model.brier.toFixed(3),model.brier!=null&&base.brier!=null&&model.brier<base.brier?"good":"",base.brier==null?"awaiting settle":`market ${base.brier.toFixed(3)}`)];if(model.log_loss!=null)tiles.push(metricTile("Log loss",model.log_loss.toFixed(3)));if(model.ece!=null)tiles.push(metricTile("ECE",model.ece.toFixed(3),"","calibration gap"));body.innerHTML=`<div class="metric-tiles">${tiles.join("")}</div>`+reliabilityView(m.reliability)}catch{}}
-  async function refreshLeaderboard() { const body=document.querySelector("#leaderboard-body");try{const r=await fetch("/api/leaderboard");if(!r.ok)return;const lb=await r.json();if(!lb.length){body.innerHTML='<div class="metrics-empty">No dummy accounts seeded.</div>';return}const cols=lb.map(a=>`<div class="mtile" title="${esc(a.strategy)}"><div class="k" style="color:var(--cyan)">${esc(a.name)}</div><div class="v ${a.roi>=0?"good":"bad"}">${pct(a.roi)}</div><div class="sub2">$${a.equity.toFixed(2)} eq · ${a.win_rate==null?"—":pct(a.win_rate)} WR</div><div class="sub2" style="margin-top:2px">${a.n_bets} bets (${a.wins}W-${a.losses}L)</div></div>`).join("");body.innerHTML=`<div class="metric-tiles">${cols}</div>`;}catch{} }
+  
+  async function viewBot(name) {
+    const dialog = document.querySelector("#bot-modal");
+    document.querySelector("#bot-modal-title").textContent = name + " Activity";
+    document.querySelector("#bot-modal-content").innerHTML = "Loading...";
+    dialog.showModal();
+    try {
+      const r = await fetch(`/api/accounts/${encodeURIComponent(name)}/bets`);
+      if (!r.ok) throw new Error();
+      const bets = await r.json();
+      if (!bets.length) { document.querySelector("#bot-modal-content").innerHTML = '<div class="empty">No bets placed yet.</div>'; return; }
+      const rows = bets.map(b => `<div class="game" style="flex-direction:column; align-items:flex-start">
+        <div style="display:flex; justify-content:space-between; width:100%">
+          <div><div class="g-title">${esc(b.event_name)}</div><div class="g-league">${esc(b.market)}: ${esc(b.outcome)}</div></div>
+          <div style="text-align:right"><div class="${b.pnl > 0 ? 'positive' : b.pnl < 0 ? 'negative' : ''}">${money(b.pnl || 0)}</div><div class="g-league">${b.status.toUpperCase()}</div></div>
+        </div>
+        <div style="display:flex; gap:12px; margin-top:6px; font-size:10px; font-family:var(--mono); color:var(--muted)">
+          <span>Stake: $${b.stake.toFixed(2)}</span>
+          <span>Entry: ${cents(b.entry_price)}</span>
+          <span>Edge: ${pct(b.edge)}</span>
+        </div>
+      </div>`).join("");
+      document.querySelector("#bot-modal-content").innerHTML = rows;
+    } catch {
+      document.querySelector("#bot-modal-content").innerHTML = '<div class="error">Failed to load activity</div>';
+    }
+  }
+
+  async function refreshLeaderboard() { const body=document.querySelector("#leaderboard-body");try{const r=await fetch("/api/leaderboard");if(!r.ok)return;const lb=await r.json();if(!lb.length){body.innerHTML='<div class="metrics-empty">No dummy accounts seeded.</div>';return}const cols=lb.map(a=>`<div class="mtile" title="${esc(a.strategy)}" data-bot="${esc(a.name)}" style="cursor:pointer" onclick="viewBot('${esc(a.name).replace(/'/g, "\\'")}')"><div class="k" style="color:var(--cyan)">${esc(a.name)}</div><div class="v ${a.roi>=0?"good":"bad"}">${pct(a.roi)}</div><div class="sub2">$${a.equity.toFixed(2)} eq · ${a.win_rate==null?"—":pct(a.win_rate)} WR</div><div class="sub2" style="margin-top:2px">${a.n_bets} bets (${a.wins}W-${a.losses}L)</div></div>`).join("");body.innerHTML=`<div class="metric-tiles">${cols}</div>`;}catch{} }
   function renderEvents(events) {
     // Don't stomp a position form the user is actively editing.
     if (document.activeElement?.closest("[data-save-position]")) return;
@@ -286,6 +340,31 @@
     const payload=Object.fromEntries(new FormData(form));Object.keys(payload).forEach(k=>{if(!payload[k])delete payload[k]});button.disabled=true;box.hidden=true;
     try{const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.detail||`Could not monitor event (${response.status})`);form.reset();await refresh();}
     catch(error){box.textContent=error.message;box.hidden=false}finally{button.disabled=false}});
+    
+  document.querySelector("#bot-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const form = e.currentTarget, btn = form.querySelector("button"), err = document.querySelector("#bot-error");
+    btn.disabled = true; err.hidden = true;
+    const sizing = form.querySelector("#bot-sizing").value;
+    const mult = Number(form.querySelector("#bot-multiplier").value);
+    const payload = {
+      name: form.querySelector("#bot-name").value,
+      edge_threshold: Number(form.querySelector("#bot-edge").value) / 100,
+      sizing: sizing,
+      kelly_multiplier: sizing === "kelly" ? mult : 1.0,
+      flat_stake: sizing === "flat" ? mult : 100.0,
+      start_bankroll: 10000.0
+    };
+    try {
+      const r = await fetch("/api/accounts", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(payload) });
+      const b = await r.json().catch(()=>({}));
+      if (!r.ok) throw new Error(b.detail || await r.text() || "Failed to create bot");
+      form.reset();
+      await refreshLeaderboard();
+    } catch (er) { err.textContent = er.message; err.hidden = false; }
+    finally { btn.disabled = false; }
+  });
+
   document.querySelector("#demo").addEventListener("click",async event=>{const box=document.querySelector("#form-error");event.currentTarget.disabled=true;box.hidden=true;try{const r=await fetch("/api/demo",{method:"POST"});if(!r.ok)throw new Error("Could not launch demo");await refresh();await refreshMetrics()}catch(error){box.textContent=error.message;box.hidden=false}finally{event.currentTarget.disabled=false}});
   document.querySelector("#events").addEventListener("submit",async event=>{const form=event.target.closest("[data-save-position]");if(!form)return;event.preventDefault();const button=form.querySelector("button"),data=new FormData(form);button.disabled=true;document.querySelector("#action-error").hidden=true;
     const payload={token_id:form.dataset.tokenId,market:form.dataset.market,outcome:form.dataset.outcome,shares:Number(data.get("shares")),avg_entry_price:Number(data.get("entry_cents"))/100};

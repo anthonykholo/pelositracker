@@ -201,6 +201,15 @@ class PositionIn(BaseModel):
     avg_entry_price: float = Field(gt=0, lt=1)
 
 
+class StrategyIn(BaseModel):
+    name: str
+    edge_threshold: float = 0.03
+    sizing: str = "kelly"
+    kelly_multiplier: float = 1.0
+    flat_stake: float = 100.0
+    start_bankroll: float = 10000.0
+
+
 @app.get("/")
 async def index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
@@ -382,6 +391,31 @@ async def get_leaderboard():
     if account_book is None:
         return []
     return account_book.leaderboard()
+
+
+@app.post("/api/accounts", status_code=201)
+async def create_account(payload: StrategyIn):
+    if account_book is None:
+        raise HTTPException(503, "Account book is not initialized")
+    from .accounts import Strategy
+    strat = Strategy(
+        name=payload.name,
+        blurb="Custom bot created via UI.",
+        edge_threshold=payload.edge_threshold,
+        sizing=payload.sizing,
+        kelly_multiplier=payload.kelly_multiplier,
+        flat_stake=payload.flat_stake,
+        start_bankroll=payload.start_bankroll
+    )
+    account_book.seed([strat])
+    return {"status": "ok"}
+
+
+@app.get("/api/accounts/{name}/bets")
+async def get_account_bets(name: str):
+    if account_book is None:
+        return []
+    return account_book.account_bets(name)
 
 
 @app.get("/api/bets")
