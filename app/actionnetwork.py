@@ -28,16 +28,36 @@ async def _ensure_books(client: httpx.AsyncClient):
         except Exception as e:
             logger.error(f"Failed to fetch Action Network books: {e}")
 
+import re as _re
+
+_STATE_SUFFIX = _re.compile(r"\s+[A-Z]{2}$")  # " NJ", " PA", " WY", etc.
+
+
+def _clean_book_name(raw: str) -> str:
+    """Normalize 'BetMGM NJ' / 'FanDuel PA' -> 'betmgm' / 'fanduel'."""
+    cleaned = _STATE_SUFFIX.sub("", raw).strip()
+    return cleaned.lower()
+
+
 def parse_action_quotes(event: Event, game: dict) -> list[Quote]:
     quotes = []
+    seen_sources: set[str] = set()   # dedupe across state variants
     for odds in game.get("odds", []):
+        # Only use full-game odds, skip first-half/first-inning/live duplicates
+        odds_type = odds.get("type", "game")
+        if odds_type != "game":
+            continue
+
         book_id = odds.get("book_id")
         book_name = _book_map.get(book_id)
         if not book_name: continue
         
-        source = book_name.lower().replace(" nj", "").replace(" on", "").replace(" mi", "").strip()
+        source = _clean_book_name(book_name)
         if "consensus" in source or "open" in source:
             continue
+        if source in seen_sources:
+            continue  # already got this book via another state variant
+        seen_sources.add(source)
             
         ml_home = odds.get("ml_home")
         if ml_home is not None and ml_home != 0:

@@ -29,6 +29,7 @@ from .sources import (extract_polymarket_slug, infer_polymarket_event,
                       polymarket_market_stream, polymarket_sports_events,
                       polymarket_sports_stream, sports_game_status)
 from .actionnetwork import action_network_poll
+from .pinnacle import pinnacle_poll
 from .store import Store
 
 load_dotenv()
@@ -445,6 +446,7 @@ async def add_event(payload: EventIn):
     if event.odds_api_sport:
         group.append(asyncio.create_task(odds_api_poll(event, on_quotes)))
         group.append(asyncio.create_task(action_network_poll(event, on_quotes)))
+        group.append(asyncio.create_task(pinnacle_poll(event, on_quotes)))
     tasks[event.id] = group
     _notify_subscribers()
     return event_view(event.id)
