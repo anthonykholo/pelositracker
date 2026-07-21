@@ -14,6 +14,17 @@ costs, and explicit policy gates. Without `CALIBRATION_ARTIFACT`, all selections
 remain `WATCH`. Setting `ENABLE_INDEPENDENT_MODELS=true` alone cannot promote a
 model.
 
+Independent output also requires `INDEPENDENT_MODEL_ARTIFACT`. Registry v1
+accepts only exact sport/league/market entries with immutable model/data hashes,
+the declared feature and state schemas, complete required inputs, chronological
+train/validation/untouched-test windows, at least 1,000 test observations from
+200 events, event-block comparison support, proper-score wins over
+equal-family consensus, the pregame market, and the Stern benchmark on
+identical test rows, time/lead calibration slices, multiplicity control, and
+later review approval. The Rust engine repeats the exact-segment, input, hash,
+model type, calibration identity, and sample checks instead of trusting the
+Python loader alone.
+
 ## Calibration artifact contract
 
 Legacy v1 JSON remains readable for historical dashboards but is never action
@@ -44,7 +55,11 @@ reviewed and versioned separately from application code.
 
 ## Milestone F status
 
-Milestone F remains disabled. The feed does not yet provide the complete,
-audited feature sets and sport/league-specific out-of-sample evidence required
-for basketball, soccer, hockey, baseball, football, or player-prop models.
-Hard-coded projections remain non-eligible research benchmarks only.
+The promotion boundary and audit registry are implemented, but no model is
+promoted. The feed does not yet provide the complete, audited feature sets and
+sport/league-specific out-of-sample evidence required for basketball, soccer,
+hockey, baseball, football, or player-prop models. The score/clock math remains
+a non-eligible research kernel and cannot be promoted by an artifact. Registry
+v1 recognizes only a fitted NBA moneyline logistic contract with verified
+possession, overtime, pregame, and phase-interaction inputs; the repository
+ships no fitted artifact for it.

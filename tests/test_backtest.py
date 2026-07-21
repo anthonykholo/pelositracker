@@ -64,6 +64,7 @@ def test_evaluation_reports_calibration_decomposition_execution_and_event_blocks
             "filled_cash": cash,
             "filled_shares": shares,
             "execution_fee": .05,
+            "entry_independent_prob": probability + .01,
             "profit_direction": profit_direction,
         })
 
@@ -92,6 +93,11 @@ def test_evaluation_reports_calibration_decomposition_execution_and_event_blocks
     assert report["eligibility_coverage"]["rejection_gates"] == {
         "uncertainty_support": 1
     }
+    assert report["independent_model"]["n_settled"] == 4
+    assert report["independent_model"]["brier"] is not None
+    assert report["independent_model"]["same_rows_calibrated_consensus"][
+        "brier"
+    ] == report["model"]["brier"]
     assert report["statistical_claim_supported"] is False
 
 
@@ -136,6 +142,14 @@ def test_ledger_roundtrip_clv_and_settlement(tmp_path):
     try:
         event = Event(name="Hawks vs Foxes", sport="basketball", home="Hawks", away="Foxes")
         sig = paper_signal("home", 0.60, 0.55, 0.05)
+        sig.independent_model_probability = .61
+        sig.independent_model_version = "nba-test-v1"
+        sig.independent_model_hash = "a" * 64
+        sig.independent_calibration_version = "nba-cal-test-v1"
+        sig.independent_calibration_hash = "b" * 64
+        sig.independent_model_sample_size = 1500
+        sig.independent_model_event_count = 500
+        sig.independent_model_registry_version = "1:fixture"
 
         assert ledger.record_signals(event, [sig]) == 1
         assert ledger.record_signals(event, [sig]) == 0  # deduped per selection
@@ -154,6 +168,13 @@ def test_ledger_roundtrip_clv_and_settlement(tmp_path):
         assert row["clv"] == pytest.approx(0.62 - 0.55)     # close executable - entry
         assert row["settled_result"] == 1.0                 # Hawks (home) won
         assert row["devig_method"] == "shin"
+        assert row["entry_independent_prob"] == pytest.approx(.61)
+        assert row["independent_model_version"] == "nba-test-v1"
+        assert row["independent_calibration_version"] == "nba-cal-test-v1"
+        decision = ledger.all_decisions()[0]
+        assert decision["independent_model_hash"] == "a" * 64
+        assert decision["independent_calibration_hash"] == "b" * 64
+        assert decision["independent_model_registry_version"] == "1:fixture"
 
         summary = backtest.summary(rows)
         assert summary["n_settled"] == 1

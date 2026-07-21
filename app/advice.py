@@ -126,6 +126,17 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
             "model_live_prob": signal.model_live_prob if signal else None,
             "independent_model_probability": (
                 signal.independent_model_probability if signal else None),
+            "independent_model_version": (
+                signal.independent_model_version if signal else None),
+            "independent_model_hash": signal.independent_model_hash if signal else None,
+            "independent_calibration_version": (
+                signal.independent_calibration_version if signal else None),
+            "independent_calibration_hash": (
+                signal.independent_calibration_hash if signal else None),
+            "independent_model_sample_size": (
+                signal.independent_model_sample_size if signal else 0),
+            "independent_model_event_count": (
+                signal.independent_model_event_count if signal else 0),
             "uncertainty_low": uncertainty_low,
             "uncertainty_high": uncertainty_high,
             "probability_net_ev_positive": (
@@ -165,6 +176,8 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
             "configuration_hash": signal.configuration_hash if signal else None,
             "model_version": signal.model_version if signal else None,
             "calibration_version": signal.calibration_version if signal else None,
+            "independent_model_registry_version": (
+                signal.independent_model_registry_version if signal else None),
             "execution_policy_version": signal.execution_policy_version if signal else None,
             "reasons": signal.reasons if signal else ["Waiting for an independent sportsbook reference."],
             "risk_flags": risks,

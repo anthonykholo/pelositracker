@@ -101,8 +101,11 @@
     const calibration = market.calibrated_consensus_probability == null ? "unavailable" : pct(market.calibrated_consensus_probability);
     const positiveEv = market.probability_net_ev_positive == null ? "unavailable" : pct(market.probability_net_ev_positive);
     const netEv = market.net_expected_value_total == null ? "unavailable" : money(market.net_expected_value_total);
+    const independentModel = market.independent_model_probability == null
+      ? "unavailable (no approved exact-segment artifact)"
+      : `${pct(market.independent_model_probability)} · ${esc(market.independent_model_version||"unknown version")} · calibration ${esc(market.independent_calibration_version||"unknown")} · test n=${Number(market.independent_model_sample_size||0)} across ${Number(market.independent_model_event_count||0)} events`;
     const executionAudit = `<li>Requested-size VWAP ${cents(market.requested_size_vwap)}; fee-adjusted requested cost ${cents(market.requested_effective_cost)}; simulated fee ${market.execution_fee == null ? "unknown" : "$"+market.execution_fee.toFixed(4)}; historical execution-cost adjustment ${signedCents(market.expected_execution_cost_offset)}; fillable ${market.paper_fillable_size == null ? "unknown" : market.paper_fillable_size.toFixed(2)+" shares"}.</li>`;
-    const lineage = `<li>Engine ${esc(market.engine_version||"unavailable")} · model ${esc(market.model_version||"unavailable")} (selection n=${Number(market.model_sample_size||0)}) · calibration ${esc(market.calibration_version||"unavailable")} (n=${Number(market.calibration_sample_size||0)}) · execution ${esc(market.execution_policy_version||"unavailable")} · config ${esc((market.configuration_hash||"unavailable").slice(0,12))}.</li>`;
+    const lineage = `<li>Engine ${esc(market.engine_version||"unavailable")} · consensus model ${esc(market.model_version||"unavailable")} (selection n=${Number(market.model_sample_size||0)}) · calibration ${esc(market.calibration_version||"unavailable")} (n=${Number(market.calibration_sample_size||0)}) · independent registry ${esc(market.independent_model_registry_version||"unavailable")} · independent model hash ${esc((market.independent_model_hash||"unavailable").slice(0,12))} · independent calibration hash ${esc((market.independent_calibration_hash||"unavailable").slice(0,12))} · execution ${esc(market.execution_policy_version||"unavailable")} · config ${esc((market.configuration_hash||"unavailable").slice(0,12))}.</li>`;
     const gates = (market.gate_results||[]).map(gate => `<li class="${gate.status === "fail" ? "risk" : ""}">Gate ${esc(gate.code)}: ${esc(gate.status)} · ${esc(gate.explanation||"")}${gate.value == null ? "" : ` · value ${Number(gate.value).toFixed(4)}`}${gate.threshold == null ? "" : ` · threshold ${Number(gate.threshold).toFixed(4)}`}</li>`).join("");
     return `<div class="market" data-line="${lineType(market.market,market.outcome)}" data-token-id="${esc(market.token_id)}">
       <div class="market-top"><div class="outcome">${lineBadge(market.market,market.outcome)}${esc(market.outcome)}<small>${esc(market.question)}</small></div><span class="tag ${tagClass(market.entry_action)}">${esc(market.entry_action)}</span></div>
@@ -112,7 +115,7 @@
         <div class="fig"><div class="key">Net edge</div><div class="value ${modelClass}">${signedCents(market.edge)}</div><div class="hint">After execution costs · need ${cents(market.required_edge)} · buffer ${signedCents(market.edge_buffer)}</div></div>
         <div class="fig"><div class="key">Signal quality</div><div class="value">${market.confidence == null ? "—" : market.confidence.toFixed(0)+"/100"}</div><div class="hint">Data reliability · ${market.reference_sources} source family/families</div></div>
       </div>
-      <div class="guide">${guide} ${esc(market.consensus_method||"display-only")} consensus ${pct(market.consensus_probability)} · calibrated consensus ${calibration} · independent model ${pct(market.independent_model_probability)} · uncertainty ${uncertainty} · P(net EV &gt; 0) ${positiveEv} · net EV ${netEv}. Spread ${cents(market.spread)} · ask depth ${market.ask_size == null ? "—" : market.ask_size.toFixed(1)+" shares"} · liquidity ${market.market_liquidity == null ? "—" : "$"+Number(market.market_liquidity).toLocaleString(undefined,{maximumFractionDigits:0})}.</div>
+      <div class="guide">${guide} ${esc(market.consensus_method||"display-only")} consensus ${pct(market.consensus_probability)} · calibrated consensus ${calibration} · independent model ${independentModel} · uncertainty ${uncertainty} · P(net EV &gt; 0) ${positiveEv} · net EV ${netEv}. Spread ${cents(market.spread)} · ask depth ${market.ask_size == null ? "—" : market.ask_size.toFixed(1)+" shares"} · liquidity ${market.market_liquidity == null ? "—" : "$"+Number(market.market_liquidity).toLocaleString(undefined,{maximumFractionDigits:0})}.</div>
       <details class="why" data-detail-key="${detailKey}"${openDetails.has(detailKey) ? " open" : ""}><summary>What to look out for</summary>
         <ul><li>${ages}</li>${executionAudit}${qualityReason}${lineage}${gates}${market.reasons.map(reason => `<li>${esc(reason)}</li>`).join("")}${risks.map(risk => `<li class="risk">${esc(risk)}</li>`).join("")}</ul></details>
       <details class="why"><summary>Add or update my position</summary>
@@ -192,6 +195,7 @@
         return;
       }
       const clv=m.clv||{}, model=m.model||{}, base=m.market_baseline||{};
+      const independent=m.independent_model||{};
       const execution=m.execution||{}, portfolio=m.portfolio||{}, coverage=m.eligibility_coverage||{};
       const opportunities=coverage.all_opportunities==null?"coverage unavailable":`${coverage.all_opportunities} evaluated decision(s)`;
       sub.textContent=`${m.n_bets} paper fill(s) · ${m.n_settled} settled · ${opportunities}`;
@@ -206,6 +210,10 @@
       if(model.log_loss!=null)tiles.push(metricTile("Log loss",model.log_loss.toFixed(3)));
       if(model.ece!=null)tiles.push(metricTile("ECE",model.ece.toFixed(3),"","calibration gap"));
       if(model.calibration?.slope!=null)tiles.push(metricTile("Calibration slope",model.calibration.slope.toFixed(2),"",`intercept ${model.calibration.intercept.toFixed(2)}`));
+      if(independent.brier!=null){
+        const paired=independent.same_rows_calibrated_consensus||{};
+        tiles.push(metricTile("Independent Brier",independent.brier.toFixed(3),paired.brier!=null&&independent.brier<paired.brier?"good":"",`cross-check n=${independent.n_settled||0} · same-row consensus ${paired.brier==null?"—":paired.brier.toFixed(3)}`));
+      }
       const rejected=Object.entries(coverage.rejection_gates||{}).map(([code,count])=>`${esc(code)} ${count}`).join(" · ")||"none recorded";
       body.innerHTML=`<div class="metric-tiles">${tiles.join("")}</div>`+reliabilityView(m.reliability)+`<div class="metrics-sub">Failed-gate counts: ${rejected}. No statistical edge claim is supported by this report.</div>`;
     } catch {}

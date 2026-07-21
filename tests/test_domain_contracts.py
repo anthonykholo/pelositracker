@@ -24,6 +24,14 @@ def test_settings_are_typed_and_undocumented_providers_default_off():
     assert settings.enable_action_network is False
     assert settings.enable_pinnacle_guest is False
     assert settings.enable_independent_models is False
+    assert settings.independent_model_artifact is None
+
+    configured = Settings.from_env({
+        "INDEPENDENT_MODEL_ARTIFACT": "artifacts/nba.json",
+        "CALIBRATION_ARTIFACT": "artifacts/consensus.json",
+    })
+    assert configured.independent_model_artifact == Path("artifacts/nba.json")
+    assert configured.calibration_artifact == Path("artifacts/consensus.json")
 
 
 def test_pinnacle_feature_requires_operator_credential():

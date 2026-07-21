@@ -445,5 +445,5 @@ class CalibrationArtifact:
             raise ValueError("actionable artifacts require event-block bootstrap uncertainty")
 
 
-def load_calibration(path: str | None) -> CalibrationArtifact | None:
+def load_calibration(path: str | Path | None) -> CalibrationArtifact | None:
     return CalibrationArtifact.load(path) if path else None

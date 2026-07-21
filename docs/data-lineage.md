@@ -17,10 +17,16 @@
    resulting decision. `decision_marks` persists the full canonical request and
    lineage, canonical probabilities/EV, and every machine gate even when the
    policy output is `WATCH`.
-7. A `PAPER_BET` can create a paper order/fill only when requested and filled
+7. Optional independent-model output requires an exact reviewed registry
+   policy. Its model/data/calibration hashes, test sample/event support,
+   registry version, required inputs, parameters, and calibration enter the
+   canonical request; its probability plus model/calibration lineage are
+   persisted separately from consensus. It remains a cross-check, not an
+   action override.
+8. A `PAPER_BET` can create a paper order/fill only when requested and filled
    size are positive. Full ask depth and the declared fee schedule determine
    VWAP and effective price.
-8. `close_marks` continuously retain only valid tradable observations and are
+9. `close_marks` continuously retain only valid tradable observations and are
    frozen on suspension/finalization. Settlement is a separate idempotent mark;
    it never supplies the closing price.
 

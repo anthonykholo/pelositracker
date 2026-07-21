@@ -24,7 +24,7 @@ def test_fresh_shared_sqlite_database_applies_each_component_once(tmp_path):
         ("history", 4),
         ("history", 5),
         ("ledger", 1), ("ledger", 2), ("ledger", 3), ("ledger", 4),
-        ("ledger", 5),
+        ("ledger", 5), ("ledger", 6),
         ("monitor_state", 1),
     ]
 

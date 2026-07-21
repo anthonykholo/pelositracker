@@ -38,6 +38,11 @@ def _int(env: Mapping[str, str], name: str, default: int, *, minimum: int = 1) -
     return value
 
 
+def _optional_path(env: Mapping[str, str], name: str) -> Path | None:
+    value = env.get(name, "").strip()
+    return Path(value) if value else None
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     environment: str
@@ -58,6 +63,8 @@ class Settings:
     enable_pinnacle_guest: bool
     pinnacle_guest_api_key: str
     enable_independent_models: bool
+    calibration_artifact: Path | None
+    independent_model_artifact: Path | None
     worker_count: int
     authorized_users: str
     admin_username: str
@@ -86,6 +93,10 @@ class Settings:
             enable_pinnacle_guest=_bool(values, "ENABLE_PINNACLE_GUEST", False),
             pinnacle_guest_api_key=values.get("PINNACLE_GUEST_API_KEY", "").strip(),
             enable_independent_models=_bool(values, "ENABLE_INDEPENDENT_MODELS", False),
+            calibration_artifact=_optional_path(values, "CALIBRATION_ARTIFACT"),
+            independent_model_artifact=_optional_path(
+                values, "INDEPENDENT_MODEL_ARTIFACT"
+            ),
             worker_count=_int(values, "WEB_CONCURRENCY", 1),
             authorized_users=values.get("AUTHORIZED_USERS", "").strip(),
             admin_username=values.get("ADMIN_USERNAME", "admin").strip(),

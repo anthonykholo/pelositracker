@@ -223,6 +223,7 @@ class Signal:
     source_mapping_version: str = ""
     model_version: str = ""
     calibration_version: str = ""
+    independent_model_registry_version: str = ""
     execution_policy_version: str = ""
     input_snapshot_json: str = ""
     token_id: str | None = None
@@ -232,6 +233,12 @@ class Signal:
     consensus_probability: float = 0.0
     calibrated_consensus_probability: float | None = None
     independent_model_probability: float | None = None
+    independent_model_version: str | None = None
+    independent_model_hash: str | None = None
+    independent_calibration_version: str | None = None
+    independent_calibration_hash: str | None = None
+    independent_model_sample_size: int = 0
+    independent_model_event_count: int = 0
     uncertainty_low: float | None = None
     uncertainty_high: float | None = None
     probability_net_ev_positive: float | None = None

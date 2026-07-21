@@ -28,4 +28,8 @@ remains display-only `WATCH` and no edge claim is made.
 
 ## F — Validated models only
 
-Enable only sport/market models with versioned out-of-sample evidence. Unsupported combinations remain display-only and are documented explicitly.
+Promotion boundary implemented: exact-segment versioned out-of-sample evidence,
+required-input contracts, baseline comparisons, event-block support,
+multiplicity control, review approval, separate persistence/evaluation lineage,
+and a second Rust-side validation gate. No artifact ships, so no sport model is
+enabled and unsupported combinations remain unavailable.

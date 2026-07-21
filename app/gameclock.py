@@ -59,7 +59,7 @@ def _period_index(period: str) -> int | None:
     return int(match.group()) if match else None
 
 
-def _clock_seconds(clock: str) -> float | None:
+def clock_seconds(clock: str) -> float | None:
     text = (clock or "").strip()
     if not text:
         return None
@@ -92,7 +92,7 @@ def game_progress(
     """
     rule = league_rule(sport, league)
     index = _period_index(period)
-    clock_value = _clock_seconds(clock)
+    clock_value = clock_seconds(clock)
     if rule is None or index is None or clock_value is None:
         return (None, None)
     if index < 1 or index > rule.period_count:

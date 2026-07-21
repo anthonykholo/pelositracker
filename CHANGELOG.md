@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.0 — Independent-model evidence registry
+
+- Added a fail-closed exact sport/league/market registry for independently
+  validated model artifacts; `ENABLE_INDEPENDENT_MODELS` alone can no longer
+  expose the legacy score/clock benchmark.
+- Required chronological train/validation/untouched-test windows, model/data/
+  calibration hashes, minimum test observations/events, same-row proper-score
+  wins against consensus, pregame, and Stern baselines, time/lead calibration
+  slices, event-block support, search control, and explicit review approval.
+- Restricted the future runtime contract to a fitted NBA moneyline logistic
+  model requiring pregame, score, time, possession, overtime, and phase
+  features; the legacy Brownian score/clock formula remains benchmark-only.
+- Persisted independent-model and calibration lineage in ledger v6 and added
+  same-row evaluation without changing paper actions.
+- Shipped no fitted model artifact. Every sport model therefore remains
+  unavailable and no predictive-edge claim is made.
+
 ## 0.5.0 — Chronological calibration and paper risk controls
 
 - Added a v2 fitted-artifact contract with event-grouped nested chronological

@@ -10,6 +10,9 @@ if records need to survive redeploys.
   reconnects, quota headers, feed groups, and pending notifications.
 - Polling: `ODDS_POLL_SECONDS=45` by default; keep it below the accepted maximum
   data age while respecting the provider quota.
+- Models: `ENABLE_INDEPENDENT_MODELS=true` is inert unless
+  `INDEPENDENT_MODEL_ARTIFACT` points to a valid reviewed exact-segment
+  registry. Invalid artifacts abort startup; no artifact ships.
 - Shutdown: provider groups are canceled/awaited, notifications are drained,
   and repositories are closed.
 

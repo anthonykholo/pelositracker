@@ -43,10 +43,6 @@ struct QuoteInput {
     accepting_orders: bool,
     // Phase 2b: parsed spread/total line and normalized side
     // (home | away | over | under), resolved in Python.
-    #[serde(default)]
-    point: Option<f64>,
-    #[serde(default)]
-    side: Option<String>,
 }
 
 impl QuoteInput {
@@ -73,21 +69,23 @@ impl QuoteInput {
     }
 }
 
-// Phase 2a: game state carries fraction_remaining so an INDEPENDENT live
-// win-probability model can be computed. It is used only as a cross-check
-// (and, later, a stale-quote fallback) — never added on top of an already-live
-// market line, which would double-count information the market has priced.
+// Reviewed game-state features can produce an independent live probability.
+// The result is a displayed cross-check only and never changes the action basis.
 #[derive(Clone, Debug, Deserialize)]
 struct StateInput {
     home_score: f64,
     away_score: f64,
     observed_at: f64,
     #[serde(default)]
-    fraction_remaining: Option<f64>,
+    seconds_remaining: Option<f64>,
+    #[serde(default)]
+    overtime_number: Option<i32>,
     #[serde(default)]
     timestamp_trusted: bool,
     #[serde(default)]
     state_valid: bool,
+    #[serde(default)]
+    possession_home: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -137,6 +135,32 @@ struct UncertaintyDrawInput {
     missing_family_coefficients: BTreeMap<String, f64>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct IndependentModelPolicyInput {
+    model_id: String,
+    model_version: String,
+    model_hash: String,
+    training_data_hash: String,
+    registry_artifact_hash: String,
+    sport: String,
+    league: String,
+    market: String,
+    model_type: String,
+    feature_schema_version: String,
+    state_schema_version: String,
+    required_inputs: Vec<String>,
+    parameters: BTreeMap<String, f64>,
+    calibration_method: String,
+    calibration_version: String,
+    calibration_hash: String,
+    beta_coefficients: Vec<f64>,
+    test_sample_size: usize,
+    test_event_count: usize,
+    missing_feature_behavior: String,
+    #[serde(default)]
+    evidence_passed: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct EvaluateRequest {
     as_of: f64,
@@ -150,9 +174,10 @@ struct EvaluateRequest {
     states: Vec<StateInput>,
     #[serde(default)]
     sport: Option<String>,
-    // Pregame expected home margin prior = -(pregame home spread). None until
-    // Phase 2b captures pregame lines; the model then falls back to pure
-    // current-lead extrapolation (mu = 0).
+    #[serde(default)]
+    league: Option<String>,
+    // Missing pregame information disables the independent model; there is no
+    // zero-margin fallback.
     #[serde(default)]
     pregame_spread: Option<f64>,
     #[allow(dead_code)]
@@ -165,6 +190,8 @@ struct EvaluateRequest {
     enable_independent_model: bool,
     #[serde(default)]
     model_policies: Vec<ModelPolicyInput>,
+    #[serde(default)]
+    independent_model_policies: Vec<IndependentModelPolicyInput>,
 }
 
 fn default_true() -> bool {
@@ -223,6 +250,12 @@ struct SignalOutput {
     consensus_probability: f64,
     calibrated_consensus_probability: Option<f64>,
     independent_model_probability: Option<f64>,
+    independent_model_version: Option<String>,
+    independent_model_hash: Option<String>,
+    independent_calibration_version: Option<String>,
+    independent_calibration_hash: Option<String>,
+    independent_model_sample_size: usize,
+    independent_model_event_count: usize,
     uncertainty_low: Option<f64>,
     uncertainty_high: Option<f64>,
     probability_net_ev_positive: Option<f64>,
@@ -360,6 +393,7 @@ fn gate(
 }
 
 /// Abramowitz & Stegun 7.1.26 approximation of erf (max abs error ~1.5e-7).
+#[cfg(test)]
 fn erf(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let x = x.abs();
@@ -372,6 +406,7 @@ fn erf(x: f64) -> f64 {
     sign * y
 }
 
+#[cfg(test)]
 fn normal_cdf(x: f64) -> f64 {
     0.5 * (1.0 + erf(x / std::f64::consts::SQRT_2))
 }
@@ -379,28 +414,15 @@ fn normal_cdf(x: f64) -> f64 {
 fn is_moneyline(market: &str) -> bool {
     matches!(
         market.to_lowercase().as_str(),
-        "moneyline" | "h2h" | "winner"
+        "moneyline" | "h2h" | "winner" | "match_winner"
     )
-}
-
-/// Standard deviation of the FINAL score margin per sport (points/goals).
-fn sport_margin_sigma(sport: &str) -> f64 {
-    match sport.trim().to_lowercase().as_str() {
-        "basketball" | "nba" => 11.5,
-        "wnba" => 10.5,
-        "ncaab" => 10.5,
-        "football" | "nfl" => 13.5,
-        "ncaaf" => 16.0,
-        "hockey" | "nhl" => 2.2,
-        "baseball" | "mlb" => 4.0,
-        _ => 11.5,
-    }
 }
 
 /// Stern (1994) Brownian-motion live win probability for the HOME side.
 /// Final margin ~ Normal(lead + mu * f, sigma^2 * f), f = fraction remaining,
 /// mu = pregame expected home margin. P(home win) = Phi(E[margin] / sd).
 /// f is floored so the sqrt(f) denominator cannot blow up at the buzzer.
+#[cfg(test)]
 fn live_winprob(lead: f64, pregame_margin: f64, fraction_remaining: f64, sigma: f64) -> f64 {
     let f = fraction_remaining.clamp(0.0, 1.0);
     if f <= 1e-4 {
@@ -430,6 +452,151 @@ fn is_total(market: &str) -> bool {
     )
 }
 
+fn canonical_model_market(market: &str) -> Option<&'static str> {
+    if is_moneyline(market) {
+        Some("moneyline")
+    } else if is_spread(market) {
+        Some("spread")
+    } else if is_total(market) {
+        Some("total")
+    } else {
+        None
+    }
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+}
+
+fn independent_policy_eligible(
+    policy: &IndependentModelPolicyInput,
+    sport: &str,
+    league: &str,
+    market: &str,
+) -> bool {
+    let required: BTreeSet<&str> = policy.required_inputs.iter().map(String::as_str).collect();
+    let common_inputs = [
+        "home_score",
+        "away_score",
+        "seconds_remaining",
+        "possession_home",
+        "overtime_number",
+        "provider_timestamp",
+        "pregame_spread",
+    ];
+    let coefficients = [
+        "intercept",
+        "score_differential",
+        "pregame_home_margin",
+        "time_remaining_fraction",
+        "score_time_interaction",
+        "pregame_time_interaction",
+        "home_possession",
+        "overtime",
+        "late_game",
+    ];
+    let valid_calibration = match policy.calibration_method.as_str() {
+        "identity" => policy.beta_coefficients == [1.0, 1.0, 0.0],
+        "beta" => beta_calibrate(0.5, &policy.beta_coefficients).is_some(),
+        _ => false,
+    };
+    policy.evidence_passed
+        && !policy.model_id.is_empty()
+        && !policy.model_version.is_empty()
+        && valid_sha256(&policy.model_hash)
+        && valid_sha256(&policy.training_data_hash)
+        && valid_sha256(&policy.registry_artifact_hash)
+        && !policy.calibration_version.is_empty()
+        && valid_sha256(&policy.calibration_hash)
+        && policy.model_type == "basketball_game_state_logit_v1"
+        && policy.feature_schema_version == "independent-features-v1"
+        && policy.state_schema_version == "game-state-v2"
+        && policy.sport.eq_ignore_ascii_case(sport)
+        && policy.league.eq_ignore_ascii_case(league)
+        && policy.market.eq_ignore_ascii_case(market)
+        && sport.eq_ignore_ascii_case("basketball")
+        && league.eq_ignore_ascii_case("nba")
+        && market.eq_ignore_ascii_case("moneyline")
+        && policy.test_sample_size >= 1000
+        && policy.test_event_count >= 200
+        && required.len() == common_inputs.len()
+        && common_inputs.iter().all(|name| required.contains(name))
+        && policy.parameters.len() == coefficients.len() + 3
+        && coefficients.iter().all(|name| {
+            policy
+                .parameters
+                .get(*name)
+                .is_some_and(|value| value.is_finite() && value.abs() <= 100.0)
+        })
+        && policy
+            .parameters
+            .get("regulation_seconds")
+            .is_some_and(|value| *value == 48.0 * 60.0)
+        && policy
+            .parameters
+            .get("overtime_period_seconds")
+            .is_some_and(|value| *value == 5.0 * 60.0)
+        && policy
+            .parameters
+            .get("late_game_threshold")
+            .is_some_and(|value| value.is_finite() && *value > 0.0 && *value < 1.0)
+        && policy.missing_feature_behavior == "omit_output"
+        && valid_calibration
+}
+
+fn independent_home_probability(
+    policy: &IndependentModelPolicyInput,
+    state: &StateInput,
+    pregame_spread: f64,
+) -> Option<f64> {
+    let seconds_remaining = state.seconds_remaining?;
+    let possession_home = state.possession_home?;
+    let overtime_number = state.overtime_number?;
+    if !pregame_spread.is_finite()
+        || !seconds_remaining.is_finite()
+        || (possession_home != 0.0 && possession_home != 1.0)
+        || overtime_number < 0
+    {
+        return None;
+    }
+    let period_seconds = if overtime_number > 0 {
+        *policy.parameters.get("overtime_period_seconds")?
+    } else {
+        *policy.parameters.get("regulation_seconds")?
+    };
+    if !(0.0..=period_seconds).contains(&seconds_remaining) {
+        return None;
+    }
+    let parameter = |name: &str| policy.parameters.get(name).copied();
+    let time_fraction = seconds_remaining / period_seconds;
+    let lead = state.home_score - state.away_score;
+    let pregame_home_margin = -pregame_spread;
+    let late_game = if time_fraction <= parameter("late_game_threshold")? {
+        1.0
+    } else {
+        0.0
+    };
+    let linear = parameter("intercept")?
+        + parameter("score_differential")? * lead
+        + parameter("pregame_home_margin")? * pregame_home_margin
+        + parameter("time_remaining_fraction")? * time_fraction
+        + parameter("score_time_interaction")? * lead * time_fraction
+        + parameter("pregame_time_interaction")? * pregame_home_margin * time_fraction
+        + parameter("home_possession")? * possession_home
+        + parameter("overtime")? * if overtime_number > 0 { 1.0 } else { 0.0 }
+        + parameter("late_game")? * late_game;
+    if !linear.is_finite() {
+        return None;
+    }
+    beta_calibrate(
+        clamp(inv_logit(linear), 1e-9, 1.0 - 1e-9),
+        &policy.beta_coefficients,
+    )
+}
+
 /// Extra required edge by market efficiency/limits. Player props (anything not
 /// a mainline market) have high vig and low limits, so demand more; totals a
 /// little; moneyline/spread none.
@@ -443,23 +610,11 @@ fn market_premium(market: &str) -> f64 {
     }
 }
 
-/// SD of the FINAL combined score (points/goals) per sport.
-fn sport_total_sigma(sport: &str) -> f64 {
-    match sport.trim().to_lowercase().as_str() {
-        "basketball" | "nba" => 16.0,
-        "wnba" | "ncaab" => 14.0,
-        "football" | "nfl" => 10.0,
-        "ncaaf" => 11.0,
-        "hockey" | "nhl" => 2.0,
-        "baseball" | "mlb" => 3.0,
-        _ => 16.0,
-    }
-}
-
 /// Probability the given spread side covers. `point` is the side's line
 /// (e.g. home -6.5 -> point=-6.5); it covers if side_margin + point > 0.
 /// Gaussian approximation — NFL key-number masses at 3/7 are a known
 /// limitation and are not modeled here (this is a cross-check, not the price).
+#[cfg(test)]
 fn spread_cover_prob(
     lead: f64,
     pregame_margin: f64,
@@ -494,6 +649,7 @@ fn spread_cover_prob(
 
 /// Probability the total goes over/under `line`. E[final] blends a pregame
 /// total prior (weighted by fraction remaining) with the observed pace.
+#[cfg(test)]
 fn total_prob(
     current_total: f64,
     pregame_total: Option<f64>,
@@ -668,18 +824,27 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
     }
     let max_age = request.max_age_seconds.max(1.0);
 
-    // Independent live-model inputs (Phase 2a): freshest state with a known
-    // fraction remaining, plus the pregame expected home margin prior.
+    // Independent live-model inputs are considered only when a reviewed exact-
+    // segment policy is present. The operator flag alone cannot expose a model.
     let sport = request.sport.clone().unwrap_or_default();
-    let pregame_margin = request.pregame_spread.map(|s| -s).unwrap_or(0.0);
+    let league = request.league.clone().unwrap_or_default();
     let latest_state = request
         .states
         .iter()
         .filter(|s| {
             request.enable_independent_model
+                && !request.independent_model_policies.is_empty()
                 && s.timestamp_trusted
                 && s.state_valid
-                && s.fraction_remaining.is_some()
+                && s.home_score.is_finite()
+                && s.away_score.is_finite()
+                && s.home_score >= 0.0
+                && s.away_score >= 0.0
+                && s.seconds_remaining
+                    .is_some_and(|seconds| seconds.is_finite() && seconds >= 0.0)
+                && s.overtime_number.is_some_and(|number| number >= 0)
+                && s.possession_home
+                    .is_some_and(|value| value == 0.0 || value == 1.0)
                 && now_seconds >= s.observed_at
                 && now_seconds - s.observed_at <= max_age
         })
@@ -748,41 +913,47 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
             .map(|quote| quote.outcome_key())
             .collect();
 
-        // Independent live model for this outcome (cross-check, not the edge).
-        let model_live: Option<f64> = latest_state.and_then(|st| {
-            let f = st.fraction_remaining?;
-            let lead = st.home_score - st.away_score;
-            if is_moneyline(&market_type) {
-                let p_home = live_winprob(lead, pregame_margin, f, sport_margin_sigma(&sport));
+        let model_market = canonical_model_market(&market_type);
+        let independent_policy = model_market.and_then(|canonical_market| {
+            request.independent_model_policies.iter().find(|candidate| {
+                independent_policy_eligible(candidate, &sport, &league, canonical_market)
+            })
+        });
+
+        // Reviewed independent live model for this outcome. It is a displayed
+        // cross-check and never replaces the calibrated-consensus action basis.
+        let model_live: Option<f64> = independent_policy.and_then(|model| {
+            latest_state.and_then(|st| {
+                let p_home = independent_home_probability(model, st, request.pregame_spread?)?;
                 let is_away = outcome_key.eq_ignore_ascii_case("away")
                     || target_quotes[0]
                         .outcome
                         .eq_ignore_ascii_case(&request.away_outcome);
                 Some(if is_away { 1.0 - p_home } else { p_home })
-            } else if is_spread(&market_type) {
-                let sample = target_quotes.first()?;
-                spread_cover_prob(
-                    lead,
-                    pregame_margin,
-                    f,
-                    sport_margin_sigma(&sport),
-                    sample.point?,
-                    sample.side.as_deref()?,
-                )
-            } else if is_total(&market_type) {
-                let sample = target_quotes.first()?;
-                Some(total_prob(
-                    st.home_score + st.away_score,
-                    request.pregame_total,
-                    f,
-                    sport_total_sigma(&sport),
-                    sample.point?,
-                    sample.side.as_deref()?,
-                ))
-            } else {
-                None
-            }
+            })
         });
+        let independent_model_version =
+            model_live.and_then(|_| independent_policy.map(|model| model.model_version.clone()));
+        let independent_model_hash =
+            model_live.and_then(|_| independent_policy.map(|model| model.model_hash.clone()));
+        let independent_calibration_version = model_live
+            .and_then(|_| independent_policy.map(|model| model.calibration_version.clone()));
+        let independent_calibration_hash =
+            model_live.and_then(|_| independent_policy.map(|model| model.calibration_hash.clone()));
+        let independent_model_sample_size = if model_live.is_some() {
+            independent_policy
+                .map(|model| model.test_sample_size)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let independent_model_event_count = if model_live.is_some() {
+            independent_policy
+                .map(|model| model.test_event_count)
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         // Per-source de-vigged fair for this outcome.
         let sources: BTreeSet<String> =
@@ -910,9 +1081,12 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
             ));
             if let (Some(p), Some(st)) = (model_live, latest_state) {
                 reasons.push(format!(
-                    "live model {:.1}% ({:.0}% game left)",
+                    "reviewed independent model {:.1}% ({}, {:.0}s in modeled period left)",
                     p * 100.0,
-                    st.fraction_remaining.unwrap_or(0.0) * 100.0
+                    independent_policy
+                        .map(|model| model.model_version.as_str())
+                        .unwrap_or("unavailable"),
+                    st.seconds_remaining.unwrap_or(0.0)
                 ));
             }
             signals.push(SignalOutput {
@@ -954,6 +1128,12 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
                 consensus_probability: own,
                 calibrated_consensus_probability: None,
                 independent_model_probability: model_live,
+                independent_model_version,
+                independent_model_hash,
+                independent_calibration_version,
+                independent_calibration_hash,
+                independent_model_sample_size,
+                independent_model_event_count,
                 uncertainty_low: None,
                 uncertainty_high: None,
                 probability_net_ev_positive: None,
@@ -1181,10 +1361,13 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
         ));
         if let (Some(p), Some(st)) = (model_live, latest_state) {
             reasons.push(format!(
-                "independent live model {:.1}% ({:+.1}pp vs consensus, {:.0}% game left)",
+                "reviewed independent model {:.1}% ({}, {:+.1}pp vs consensus, {:.0}s in modeled period left)",
                 p * 100.0,
+                independent_policy
+                    .map(|model| model.model_version.as_str())
+                    .unwrap_or("unavailable"),
                 (p - fair) * 100.0,
-                st.fraction_remaining.unwrap_or(0.0) * 100.0
+                st.seconds_remaining.unwrap_or(0.0)
             ));
         }
         if let Some(probability) = calibrated {
@@ -1460,6 +1643,12 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
             consensus_probability: fair,
             calibrated_consensus_probability: calibrated,
             independent_model_probability: model_live,
+            independent_model_version,
+            independent_model_hash,
+            independent_calibration_version,
+            independent_calibration_hash,
+            independent_model_sample_size,
+            independent_model_event_count,
             uncertainty_low,
             uncertainty_high,
             probability_net_ev_positive,
@@ -1530,8 +1719,6 @@ mod tests {
             depth_complete: true,
             fee_metadata_known: true,
             accepting_orders: true,
-            point: None,
-            side: None,
         }
     }
 
@@ -1562,6 +1749,50 @@ mod tests {
             missing_family_coefficients: BTreeMap::new(),
             uncertainty_draws: Vec::new(),
         };
+        let independent_policy = IndependentModelPolicyInput {
+            model_id: "nba-moneyline-game-state-logit".to_string(),
+            model_version: "nba-moneyline-test".to_string(),
+            model_hash: "a".repeat(64),
+            training_data_hash: "b".repeat(64),
+            registry_artifact_hash: "c".repeat(64),
+            sport: "basketball".to_string(),
+            league: "nba".to_string(),
+            market: "moneyline".to_string(),
+            model_type: "basketball_game_state_logit_v1".to_string(),
+            feature_schema_version: "independent-features-v1".to_string(),
+            state_schema_version: "game-state-v2".to_string(),
+            required_inputs: vec![
+                "home_score".to_string(),
+                "away_score".to_string(),
+                "seconds_remaining".to_string(),
+                "possession_home".to_string(),
+                "overtime_number".to_string(),
+                "provider_timestamp".to_string(),
+                "pregame_spread".to_string(),
+            ],
+            parameters: BTreeMap::from([
+                ("intercept".to_string(), 0.0),
+                ("score_differential".to_string(), 0.22),
+                ("pregame_home_margin".to_string(), 0.08),
+                ("time_remaining_fraction".to_string(), -0.1),
+                ("score_time_interaction".to_string(), -0.05),
+                ("pregame_time_interaction".to_string(), 0.02),
+                ("home_possession".to_string(), 0.08),
+                ("overtime".to_string(), 0.0),
+                ("late_game".to_string(), 0.1),
+                ("late_game_threshold".to_string(), 0.25),
+                ("regulation_seconds".to_string(), 2880.0),
+                ("overtime_period_seconds".to_string(), 300.0),
+            ]),
+            calibration_method: "identity".to_string(),
+            calibration_version: "nba-moneyline-cal-test".to_string(),
+            calibration_hash: "d".repeat(64),
+            beta_coefficients: vec![1.0, 1.0, 0.0],
+            test_sample_size: 1000,
+            test_event_count: 200,
+            missing_feature_behavior: "omit_output".to_string(),
+            evidence_passed: true,
+        };
         EvaluateRequest {
             as_of: 1_000.0,
             event_id: "e".to_string(),
@@ -1572,11 +1803,13 @@ mod tests {
             quotes,
             states,
             sport,
-            pregame_spread: None,
+            league: Some("nba".to_string()),
+            pregame_spread: Some(0.0),
             pregame_total: None,
             kelly_fraction: None,
             enable_independent_model: true,
             model_policies: vec![policy],
+            independent_model_policies: vec![independent_policy],
         }
     }
 
@@ -1585,9 +1818,11 @@ mod tests {
             home_score: home,
             away_score: away,
             observed_at: at,
-            fraction_remaining: Some(frac),
+            seconds_remaining: Some(frac * 2880.0),
+            overtime_number: Some(0),
             timestamp_trusted: true,
             state_valid: true,
+            possession_home: Some(1.0),
         }
     }
 
@@ -1800,6 +2035,64 @@ mod tests {
         let ap = away.model_live_prob.expect("away model prob");
         assert!(hp > 0.85, "home live prob was {hp}");
         assert!((hp + ap - 1.0).abs() < 1e-6, "home/away should complement");
-        assert!(home.reasons.iter().any(|r| r.contains("live model")));
+        assert!(home
+            .reasons
+            .iter()
+            .any(|r| r.contains("reviewed independent model")));
+        assert_eq!(
+            home.independent_model_version.as_deref(),
+            Some("nba-moneyline-test")
+        );
+        assert_eq!(
+            home.independent_calibration_version.as_deref(),
+            Some("nba-moneyline-cal-test")
+        );
+        assert_eq!(home.independent_model_sample_size, 1000);
+    }
+
+    #[test]
+    fn operator_flag_without_model_evidence_cannot_expose_independent_output() {
+        let now = 1_000.0;
+        let quotes = vec![
+            quote("A", "home", 0.60, now),
+            quote("A", "away", 0.40, now),
+            quote("B", "home", 0.60, now),
+            quote("B", "away", 0.40, now),
+        ];
+        let mut input = request_with(
+            quotes,
+            vec![state(70.0, 58.0, 0.25, now)],
+            Some("basketball".to_string()),
+        );
+        input.independent_model_policies.clear();
+
+        let results = evaluate(input, now);
+
+        assert!(results
+            .iter()
+            .all(|signal| signal.independent_model_probability.is_none()));
+    }
+
+    #[test]
+    fn malformed_registry_evidence_is_rejected_again_at_the_rust_boundary() {
+        let now = 1_000.0;
+        let quotes = vec![
+            quote("A", "home", 0.60, now),
+            quote("A", "away", 0.40, now),
+            quote("B", "home", 0.60, now),
+            quote("B", "away", 0.40, now),
+        ];
+        let mut input = request_with(
+            quotes,
+            vec![state(70.0, 58.0, 0.25, now)],
+            Some("basketball".to_string()),
+        );
+        input.independent_model_policies[0].calibration_hash = "not-a-hash".to_string();
+
+        let results = evaluate(input, now);
+
+        assert!(results
+            .iter()
+            .all(|signal| signal.independent_model_probability.is_none()));
     }
 }

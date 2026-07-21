@@ -18,9 +18,10 @@ event locks are process-local.
   Decimal paper fills.
 - `app/engine.py` and `native_engine/`: canonical JSON boundary and pure
   explicit-`as_of` policy calculation.
-- `app/model_training.py`, `app/calibration.py`: offline nested chronological
+- `app/model_training.py`, `app/calibration.py`, `app/model_registry.py`: offline nested chronological
   model selection, beta calibration, event-block artifact construction, and
-  strict live artifact loading. Training never runs in the web process.
+  strict consensus/independent-model artifact loading. Training never runs in
+  the web process and no independent model artifact ships.
 - `app/history.py`, `app/ledger.py`: immutable evidence and decision/order/fill/
   close/settlement marks.
 - `app/static/`: static HTML, CSS, local vendored libraries, and event-driven JS.

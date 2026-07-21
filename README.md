@@ -73,6 +73,7 @@ ENABLE_ACTION_NETWORK=false
 ENABLE_PINNACLE_GUEST=false
 PINNACLE_GUEST_API_KEY=
 ENABLE_INDEPENDENT_MODELS=false
+INDEPENDENT_MODEL_ARTIFACT=
 CALIBRATION_ARTIFACT=
 
 DATABASE_URL=
@@ -136,6 +137,7 @@ Ambiguous doubleheaders are quarantined, not guessed.
 - **Calibrated consensus**: consensus transformed by a reviewed chronological
   identity/beta calibration artifact; unavailable means display-only.
 - **Independent model**: a separately validated sport model, when available.
+  It requires operator opt-in and a reviewed exact-segment registry artifact.
   None is enabled in the repository today.
 - **Market probability**: fee/slippage-adjusted executable paper price.
 - **Net EV**: calibrated probability minus depth-weighted executable cost and
@@ -164,6 +166,7 @@ Ambiguous doubleheaders are quarantined, not guessed.
 Design and operating records are in [architecture](docs/architecture.md),
 [data lineage](docs/data-lineage.md), [provider support](docs/provider-support.md),
 [consensus model card](docs/model-card-consensus.md),
+[independent-model registry](docs/independent-model-registry.md),
 [backtesting methodology](docs/backtesting-methodology.md),
 [security](docs/security.md), and [operations](docs/operations.md).
 
@@ -182,12 +185,24 @@ in any fold, and fewer than 200 event-block draws. Review the artifact and its
 test metrics before setting `CALIBRATION_ARTIFACT`; producing a file does not
 establish a statistical or profitable edge.
 
+Independent models use a separate `INDEPENDENT_MODEL_ARTIFACT`. Its entries
+must have exact sport/league/market identity, immutable model and data hashes,
+chronological train/validation/test windows, at least 1,000 untouched-test
+  observations from 200 events, same-row proper-score improvement over
+  consensus, pregame, and Stern baselines, time/lead calibration slices, at
+  least 1,000 event-block draws, search-multiplicity control, required-input
+  declarations, and explicit review approval. Registry v1 is limited to a
+  fitted NBA moneyline logistic contract; score/clock Brownian routines remain
+  benchmark-only.
+`ENABLE_INDEPENDENT_MODELS=true` without this artifact has no effect. No such
+artifact ships with this repository.
+
 ## Verification
 
 ```cmd
 .venv\Scripts\python.exe -m pytest -q --basetemp=.pytest-tmp
 .venv\Scripts\python.exe -m ruff check app tests
-.venv\Scripts\python.exe -m mypy app/domain app/execution.py app/identity.py app/security.py app/settings.py app/calibration.py app/model_training.py
+.venv\Scripts\python.exe -m mypy app/domain app/execution.py app/identity.py app/security.py app/settings.py app/calibration.py app/model_training.py app/model_registry.py
 cargo fmt --manifest-path native_engine\Cargo.toml -- --check
 cargo test --manifest-path native_engine\Cargo.toml
 cargo clippy --manifest-path native_engine\Cargo.toml --all-targets -- -D warnings

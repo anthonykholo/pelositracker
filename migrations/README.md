@@ -14,3 +14,8 @@ net EV, consensus/sample metadata, serialized gate results, and requested/fill
 economics. Accounts v2 adds sport, transparent correlation group, and decision
 lineage. Existing rows remain nullable/unknown; no historical value is
 reinterpreted.
+
+Milestone F advances the ledger to v6. It adds nullable independent-model
+probability, model/calibration versions and hashes, test sample/event counts,
+and registry lineage to decision marks and eligible paper-fill rows. Historical
+rows remain explicitly unknown and are not backfilled from later model output.

@@ -22,6 +22,11 @@ Decision-mark coverage includes every evaluated `WATCH` and `PAPER_BET` row plus
 failed-gate counts. Target-mid close marks remain explicitly unavailable; they
 are never synthesized from settlement.
 
+When a reviewed independent model is present, its Brier/log scores are reported
+only on settled rows that contain that exact model output and are paired with
+the calibrated-consensus scores on those same rows. This is a cross-check
+report, not evidence that the independent model affected paper selection.
+
 Required benchmarks are executable target price, equal-family consensus,
 sharp-source consensus when independently defined, uncalibrated consensus, and
 no-independent-model policy. Searching many thresholds requires an explicit

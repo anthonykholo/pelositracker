@@ -38,6 +38,7 @@ from .store import Store
 from .settings import Settings
 from .security import AuthManager, SlidingWindowLimiter
 from .calibration import load_calibration
+from .model_registry import load_independent_models
 from .telemetry import runtime_telemetry
 from .identity import (CanonicalEvent, MappingDecision, MappingStatus)
 from .domain.time import parse_provider_timestamp
@@ -58,9 +59,12 @@ engine = SignalEngine(settings.confidence_threshold,
                       settings.max_data_age_seconds,
                       kelly_fraction=settings.kelly_fraction,
                       enable_independent_model=settings.enable_independent_models)
-calibration_artifact = load_calibration(os.getenv("CALIBRATION_ARTIFACT"))
+calibration_artifact = load_calibration(settings.calibration_artifact)
 if calibration_artifact is not None:
     engine.install_calibration(calibration_artifact)
+independent_model_artifact = load_independent_models(settings.independent_model_artifact)
+if independent_model_artifact is not None:
+    engine.install_independent_models(independent_model_artifact)
 tasks: dict[str, list[asyncio.Task]] = {}
 _finalized: set[str] = set()
 _terminal_events: dict[str, str] = {}  # event_id -> final | canceled | deleted | shutdown

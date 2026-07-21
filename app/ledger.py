@@ -194,6 +194,27 @@ class Ledger:
                     "calibration_sample_size": "INTEGER",
                 },
             })
+            self._db.migrate_columns("ledger", 6, {
+                "decision_marks": {
+                    "independent_model_probability": "DOUBLE PRECISION",
+                    "independent_model_version": "TEXT",
+                    "independent_model_hash": "TEXT",
+                    "independent_calibration_version": "TEXT",
+                    "independent_calibration_hash": "TEXT",
+                    "independent_model_sample_size": "INTEGER",
+                    "independent_model_event_count": "INTEGER",
+                    "independent_model_registry_version": "TEXT",
+                },
+                "bets": {
+                    "entry_independent_prob": "DOUBLE PRECISION",
+                    "independent_model_version": "TEXT",
+                    "independent_model_hash": "TEXT",
+                    "independent_calibration_version": "TEXT",
+                    "independent_calibration_hash": "TEXT",
+                    "independent_model_sample_size": "INTEGER",
+                    "independent_model_event_count": "INTEGER",
+                },
+            })
 
     def close(self) -> None:
         with self._lock:
@@ -215,6 +236,10 @@ class Ledger:
                 s.net_expected_value_total, s.requested_cash, s.filled_cash,
                 s.filled_shares, s.execution_fee, s.consensus_method,
                 s.calibration_sample_size,
+                s.independent_model_probability, s.independent_model_version,
+                s.independent_model_hash, s.independent_calibration_version,
+                s.independent_calibration_hash, s.independent_model_sample_size,
+                s.independent_model_event_count,
             )
             for s in signals
             if s.action == "PAPER_BET"
@@ -244,10 +269,15 @@ class Ledger:
                              requested_cash, execution_vwap, execution_fee,
                              calibrated_probability, uncertainty_low, uncertainty_high,
                              probability_net_ev_positive, net_ev_per_share, net_ev_total,
-                             consensus_method, calibration_sample_size, gate_results_json)
+                             consensus_method, calibration_sample_size, gate_results_json,
+                             independent_model_probability, independent_model_version,
+                             independent_model_hash, independent_calibration_version,
+                             independent_calibration_hash, independent_model_sample_size,
+                             independent_model_event_count,
+                             independent_model_registry_version)
                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                                     %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                                    %s,%s,%s,%s,%s)
+                                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            ON CONFLICT(decision_hash, market, outcome) DO NOTHING""",
                         (signal.decision_hash, event.id, signal.market, signal.outcome,
                          signal.observed_at.timestamp(), signal.consensus_probability,
@@ -263,7 +293,14 @@ class Ledger:
                           signal.uncertainty_high, signal.probability_net_ev_positive,
                           signal.net_expected_value_per_share, signal.net_expected_value_total,
                           signal.consensus_method, signal.calibration_sample_size,
-                          json.dumps(signal.gate_results, sort_keys=True, separators=(",", ":"))),
+                          json.dumps(signal.gate_results, sort_keys=True, separators=(",", ":")),
+                          signal.independent_model_probability,
+                          signal.independent_model_version, signal.independent_model_hash,
+                          signal.independent_calibration_version,
+                          signal.independent_calibration_hash,
+                          signal.independent_model_sample_size,
+                          signal.independent_model_event_count,
+                          signal.independent_model_registry_version),
                     )
                     reasons = " ".join(signal.reasons).casefold()
                     if (signal.market_probability > 0
@@ -295,9 +332,13 @@ class Ledger:
                              decision_hash, entry_calibrated_prob,
                              probability_net_ev_positive, net_ev_per_share, net_ev_total,
                              requested_cash, filled_cash, filled_shares, execution_fee,
-                             consensus_method, calibration_sample_size)
+                             consensus_method, calibration_sample_size,
+                             entry_independent_prob, independent_model_version,
+                             independent_model_hash, independent_calibration_version,
+                             independent_calibration_hash, independent_model_sample_size,
+                             independent_model_event_count)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            ON CONFLICT (event_id, market, outcome) DO NOTHING""",
                         row,
                     )

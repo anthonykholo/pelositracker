@@ -8,15 +8,16 @@ from datetime import datetime
 from typing import Any
 
 from .calibration import CalibrationArtifact
-from .gameclock import game_progress
+from .model_registry import IndependentModelArtifact
+from .gameclock import clock_seconds, game_progress
 from .domain.time import ensure_utc
 from .lines import is_spread_market, is_total_market, quote_line_side
 from .models import GameState, Quote, Signal, canonical_source, classify_source
 from .execution import BookLevel, simulate_buy
 
 
-ENGINE_VERSION = "live-edge-engine-0.5.0"
-REQUEST_SCHEMA_VERSION = "decision-request-v3"
+ENGINE_VERSION = "live-edge-engine-0.6.0"
+REQUEST_SCHEMA_VERSION = "decision-request-v4"
 SOURCE_MAPPING_VERSION = "canonical-source-family-v1"
 DEFAULT_MODEL_VERSION = "equal-family-logit-consensus-v2-display-only"
 EXECUTION_POLICY_VERSION = "paper-depth-v1"
@@ -50,6 +51,8 @@ class SignalEngine:
         self.model_policy_overrides: dict[str, dict[str, Any]] = {}
         self.model_version = DEFAULT_MODEL_VERSION
         self.calibration_version = "unavailable"
+        self.independent_model_artifact: IndependentModelArtifact | None = None
+        self.independent_model_registry_version = "unavailable"
 
     def install_calibration(self, artifact: CalibrationArtifact) -> None:
         """Install a validated artifact without making legacy v1 files actionable."""
@@ -59,6 +62,40 @@ class SignalEngine:
             f"{artifact.artifact_version}:{artifact.calibration_method}:"
             f"{artifact.model_hash[:12] or 'legacy-display-only'}"
         )
+
+    def install_independent_models(self, artifact: IndependentModelArtifact) -> None:
+        """Install reviewed display-only sport-model policies."""
+        self.independent_model_artifact = artifact
+        self.independent_model_registry_version = (
+            f"{artifact.artifact_version}:{artifact.artifact_hash[:12]}"
+        )
+
+    @staticmethod
+    def _canonical_model_market(market: str) -> str:
+        key = market.strip().casefold()
+        if is_spread_market(key):
+            return "spread"
+        if is_total_market(key):
+            return "total"
+        if key in {"moneyline", "h2h", "winner", "match_winner"}:
+            return "moneyline"
+        return key
+
+    def _independent_model_policies(
+        self, quotes: list[Quote], sport: str, league: str
+    ) -> list[dict[str, Any]]:
+        artifact = self.independent_model_artifact
+        if not self.enable_independent_model or artifact is None:
+            return []
+        policies = []
+        markets = sorted({self._canonical_model_market(quote.market) for quote in quotes})
+        for market in markets:
+            policy = artifact.policy_for(sport, league, market)
+            if policy is not None:
+                payload = policy.to_engine_dict()
+                payload["registry_artifact_hash"] = artifact.artifact_hash
+                policies.append(payload)
+        return policies
 
     @staticmethod
     def _legacy_test_policy(market: str) -> dict[str, Any]:
@@ -116,6 +153,9 @@ class SignalEngine:
             raise ValueError("as_of is required for deterministic evaluation")
         as_of = ensure_utc(as_of)
         model_policies = self._model_policies(quotes, sport, league)
+        independent_model_policies = self._independent_model_policies(
+            quotes, sport, league
+        )
         quote_payloads = [
             self._quote_payload(q, home_outcome, away_outcome, self.paper_notional)
             for q in quotes
@@ -126,8 +166,9 @@ class SignalEngine:
             "max_age_seconds": self.max_age_seconds,
             "kelly_fraction": self.kelly_fraction,
             "paper_notional": self.paper_notional,
-            "enable_independent_model": self.enable_independent_model,
+            "enable_independent_model": bool(independent_model_policies),
             "model_policies": model_policies,
+            "independent_model_policies": independent_model_policies,
         }
         canonical_configuration = json.dumps(
             configuration, separators=(",", ":"), sort_keys=True, allow_nan=False
@@ -152,6 +193,9 @@ class SignalEngine:
                 "source_mapping_version": SOURCE_MAPPING_VERSION,
                 "model_version": self.model_version,
                 "calibration_version": self.calibration_version,
+                "independent_model_registry_version": (
+                    self.independent_model_registry_version
+                ),
                 "execution_policy_version": EXECUTION_POLICY_VERSION,
             },
             "quotes": quote_payloads,
@@ -189,6 +233,9 @@ class SignalEngine:
                 source_mapping_version=SOURCE_MAPPING_VERSION,
                 model_version=self.model_version,
                 calibration_version=self.calibration_version,
+                independent_model_registry_version=(
+                    self.independent_model_registry_version
+                ),
                 execution_policy_version=EXECUTION_POLICY_VERSION,
                 input_snapshot_json=canonical_request,
                 token_id=audit.get("token_id"),
@@ -198,7 +245,30 @@ class SignalEngine:
 
     @staticmethod
     def _state_payload(s: GameState, sport: str, league: str) -> dict:
-        _, fraction_remaining = game_progress(sport, s.period, s.clock, league)
+        regulation_seconds, fraction_remaining = game_progress(
+            sport, s.period, s.clock, league
+        )
+        overtime_number = 0 if regulation_seconds is not None else s.overtime_number
+        seconds_remaining = regulation_seconds
+        if seconds_remaining is None and overtime_number is not None and overtime_number > 0:
+            seconds_remaining = (
+                s.normalized_seconds_remaining
+                if s.normalized_seconds_remaining is not None
+                else clock_seconds(s.clock)
+            )
+        possession = (s.possession or "").strip().casefold()
+        home_identity = (s.home_team_id or "").strip().casefold()
+        away_identity = (s.away_team_id or "").strip().casefold()
+        possession_home = None
+        if possession in {"home", "h"} or (home_identity and possession == home_identity):
+            possession_home = 1.0
+        elif possession in {"away", "a"} or (away_identity and possession == away_identity):
+            possession_home = 0.0
+        independent_inputs_valid = (
+            seconds_remaining is not None
+            and overtime_number is not None
+            and possession_home is not None
+        )
         return {
             "home_score": s.home_score,
             "away_score": s.away_score,
@@ -209,8 +279,12 @@ class SignalEngine:
             "processed_at": s.processed_at.timestamp(),
             "source": s.source,
             "fraction_remaining": fraction_remaining,
+            "seconds_remaining": seconds_remaining,
+            "overtime_number": overtime_number,
             "timestamp_trusted": s.timestamp_trusted,
-            "state_valid": not s.quarantined and fraction_remaining is not None,
+            "state_valid": not s.quarantined and independent_inputs_valid,
+            "possession": s.possession,
+            "possession_home": possession_home,
         }
 
     @staticmethod

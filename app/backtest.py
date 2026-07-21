@@ -300,6 +300,9 @@ def summary(bets: list[dict], decisions: list[dict] | None = None) -> dict:
     bins = reliability_bins(bets, model_key)
     executable_clv_rows = []
     consensus_clv_rows = []
+    independent_rows = [
+        row for row in bets if row.get("entry_independent_prob") is not None
+    ]
     for row in bets:
         if row.get("closing_executable") is not None:
             executable_clv_rows.append({
@@ -332,6 +335,19 @@ def summary(bets: list[dict], decisions: list[dict] | None = None) -> dict:
             # The price you could have taken, as a prediction — the bar to beat.
             "brier": brier_score(bets, "entry_executable"),
             "log_loss": log_loss(bets, "entry_executable"),
+        },
+        "independent_model": {
+            "n_settled": len(_settled(independent_rows)),
+            "brier": brier_score(independent_rows, "entry_independent_prob"),
+            "log_loss": log_loss(independent_rows, "entry_independent_prob"),
+            "same_rows_calibrated_consensus": {
+                "brier": brier_score(independent_rows, model_key),
+                "log_loss": log_loss(independent_rows, model_key),
+            },
+            "note": (
+                "cross-check only; inclusion here does not make the independent "
+                "model part of the paper action rule"
+            ),
         },
         "reliability": bins,
         "execution": execution_summary(bets),
