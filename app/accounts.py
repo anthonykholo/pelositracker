@@ -937,6 +937,25 @@ class AccountBook:
                 )
                 return [dict(row) for row in cur.fetchall()]
 
+    def bets_for_eval(self, sport: str | None = None, limit: int = 10_000) -> list[dict]:
+        """All bets across accounts (optionally one sport) for shadow evaluation."""
+        with self._lock:
+            with self._db.cursor(dict_rows=True) as cur:
+                if sport:
+                    self._db.execute(
+                        cur,
+                        "SELECT * FROM account_bets WHERE sport=%s "
+                        "ORDER BY placed_ts DESC LIMIT %s",
+                        (sport.casefold(), limit),
+                    )
+                else:
+                    self._db.execute(
+                        cur,
+                        "SELECT * FROM account_bets ORDER BY placed_ts DESC LIMIT %s",
+                        (limit,),
+                    )
+                return [dict(row) for row in cur.fetchall()]
+
     def bet_marks(self, name: str, bet_id: int, limit: int = 500) -> list[dict]:
         with self._lock:
             with self._db.cursor(dict_rows=True) as cur:

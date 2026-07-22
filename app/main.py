@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from .engine import SignalEngine
-from . import __version__, backtest
+from . import __version__, backtest, shadow_eval
 from .accounts import AccountBook, DEFAULT_STRATEGIES, line_type
 from .tennis_model import game_prob_from_prematch, match_win_prob, parse_tennis_score
 from .diagnostics import edge_health
@@ -905,6 +905,19 @@ async def get_leaderboard():
     if account_book is None:
         return []
     return await asyncio.to_thread(account_book.leaderboard)
+
+
+@app.get("/api/model-eval", dependencies=[Depends(verify_auth)])
+async def model_eval(sport: str = "tennis"):
+    """Calibration + market-baseline scorecard for model-backed paper bets.
+
+    Shadow evaluation only: it reports whether the model's probabilities are
+    calibrated and beat the executable price, and makes no profitability claim.
+    """
+    if account_book is None:
+        return {}
+    bets = await asyncio.to_thread(account_book.bets_for_eval, sport or None)
+    return await asyncio.to_thread(shadow_eval.model_eval_report, bets, sport or None)
 
 
 @app.post("/api/accounts", status_code=201, dependencies=[Depends(verify_auth)])
