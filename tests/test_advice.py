@@ -39,6 +39,41 @@ def signal(model=.62, action="PAPER_BET", confidence=82, required_edge=0.0):
                   gate_results=[{"code": "paper_policy", "status": "pass"}])
 
 
+def uncalibrated_signal(consensus=.62, action="WATCH", required_edge=0.0):
+    """A signal with references but no calibration artifact (net EV unavailable)."""
+    return Signal("event", "moneyline", "Knicks", consensus, .56, consensus - .56,
+                  80, action, ["display-only consensus"], NOW,
+                  quote_source="Polymarket", market_fair_prob=consensus,
+                  n_reference_sources=2, required_edge=required_edge,
+                  consensus_probability=consensus,
+                  calibrated_consensus_probability=None,
+                  net_expected_value_per_share=None,
+                  gate_results=[])
+
+
+def test_gross_edge_shown_when_calibrated_net_edge_is_unavailable():
+    view = market_views([poly_quote()], [uncalibrated_signal(consensus=.62)],
+                        edge_threshold=0.0)[0]
+    assert view["edge_basis"] == "gross"
+    assert view["gross_edge"] == pytest.approx(.06)      # consensus .62 - ask .56
+    assert view["edge"] == pytest.approx(.06)
+    assert view["entry_action"] == "WAIT"                # engine verdict unchanged
+    assert "calibration" in view["why_no_entry"].lower()
+
+
+def test_why_no_entry_flags_edge_below_the_required_floor():
+    view = market_views([poly_quote()], [uncalibrated_signal(consensus=.57)],
+                        edge_threshold=0.05)[0]
+    assert view["edge_basis"] == "gross"                 # gross edge .01 < required .05
+    assert "below the required" in view["why_no_entry"]
+
+
+def test_why_no_entry_is_none_for_an_entry_window():
+    view = market_views([poly_quote()], [signal()], edge_threshold=.035)[0]
+    assert view["entry_action"] == "ENTRY WINDOW"
+    assert view["why_no_entry"] is None
+
+
 def test_actionable_market_has_executable_prices_and_entry_ceiling():
     views = market_views([poly_quote()], [signal()], edge_threshold=.035)
     assert len(views) == 1

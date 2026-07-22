@@ -57,6 +57,26 @@ def _risk_flags(quote: Quote, signal: Signal | None,
     return flags
 
 
+def _entry_blocker(signal: Signal | None, entry_action: str, edge: float | None,
+                   required_edge: float | None, calibrated: float | None) -> str | None:
+    """One-line, human reason this selection is not an entry (None when it is).
+
+    Turns "why isn't the bot betting this?" from a mystery into a visible,
+    ranked reason: no reference, edge below the floor, or display-only because no
+    validated calibration artifact is installed."""
+    if entry_action == "ENTRY WINDOW":
+        return None
+    if signal is None:
+        return "No independent sportsbook reference matched yet — edge not estimable."
+    if edge is not None and required_edge is not None and edge < required_edge:
+        return (f"Edge {edge * 100:+.1f}% is below the required "
+                f"{required_edge * 100:.1f}%.")
+    if calibrated is None:
+        return ("Display-only: no validated calibration artifact, so no actionable net "
+                "edge (uncalibrated bots may still trade the gross edge).")
+    return "Engine gates not cleared — expand details."
+
+
 def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: float) -> list[dict]:
     """Return only selections with an executable Polymarket ask."""
     now = datetime.now(timezone.utc)
@@ -76,6 +96,15 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
         calibrated_probability = signal.calibrated_consensus_probability if signal else None
         decision_probability = calibrated_probability
         entry_margin = signal.net_expected_value_per_share if signal else None
+        # Display-only gross edge (consensus fair minus executable ask) shown when
+        # the calibrated, execution-cost-adjusted net edge is unavailable, so the
+        # card shows the bot's uncalibrated decision basis instead of just "—".
+        gross_edge = (consensus_probability - quote.ask
+                      if signal is not None and consensus_probability is not None
+                      and quote.ask is not None else None)
+        edge = entry_margin if entry_margin is not None else gross_edge
+        edge_basis = ("net" if entry_margin is not None
+                      else "gross" if gross_edge is not None else None)
         required_edge = max(edge_threshold, signal.required_edge) if signal else None
         expected_execution_cost_offset = (
             decision_probability - signal.market_probability - entry_margin
@@ -92,13 +121,18 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
                 and execution_premium is not None) else None
         )
         room_to_ceiling = price_ceiling - quote.ask if price_ceiling is not None else None
-        edge_buffer = entry_margin - required_edge if entry_margin is not None and required_edge is not None else None
-        if signal and signal.action == "PAPER_BET" and edge_buffer is not None and edge_buffer >= 0:
+        net_edge_buffer = (entry_margin - required_edge
+                           if entry_margin is not None and required_edge is not None else None)
+        edge_buffer = edge - required_edge if edge is not None and required_edge is not None else None
+        if (signal and signal.action == "PAPER_BET"
+                and net_edge_buffer is not None and net_edge_buffer >= 0):
             entry_action = "ENTRY WINDOW"
         elif signal:
             entry_action = "WAIT"
         else:
             entry_action = "MARKET ONLY"
+        why_no_entry = _entry_blocker(signal, entry_action, edge, required_edge,
+                                      calibrated_probability)
         risks = _risk_flags(quote, signal, provider_age_seconds)
         uncertainty_low = signal.uncertainty_low if signal else None
         uncertainty_high = signal.uncertainty_high if signal else None
@@ -152,7 +186,10 @@ def market_views(quotes: list[Quote], signals: list[Signal], edge_threshold: flo
             "expected_execution_cost_offset": expected_execution_cost_offset,
             "paper_fillable_size": signal.fillable_size if signal else None,
             "entry_margin": entry_margin,
-            "edge": entry_margin,
+            "edge": edge,
+            "gross_edge": gross_edge,
+            "edge_basis": edge_basis,
+            "why_no_entry": why_no_entry,
             "required_edge": required_edge,
             "edge_buffer": edge_buffer,
             "price_ceiling": price_ceiling,

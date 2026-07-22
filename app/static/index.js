@@ -87,7 +87,12 @@
 
   function marketRow(eventId, market, openDetails) {
     const detailKey = keyFor("market", eventId, market.token_id);
-    const modelClass = market.entry_margin == null ? "" : market.entry_margin >= 0 ? "positive" : "negative";
+    const modelClass = market.edge == null ? "" : market.edge >= 0 ? "positive" : "negative";
+    const edgeIsGross = market.edge_basis === "gross";
+    const edgeLabel = edgeIsGross ? "Edge (gross)" : "Net edge";
+    const edgeHint = (edgeIsGross ? "Consensus − ask · pre-cost, uncalibrated" : "After execution costs")
+      + ` · need ${cents(market.required_edge)} · buffer ${signedCents(market.edge_buffer)}`;
+    const whyNoEntry = market.why_no_entry ? `<div class="why-no-entry">${esc(market.why_no_entry)}</div>` : "";
     const guide = market.price_ceiling == null
       ? "Add a matching sportsbook event to calculate a validated entry ceiling."
       : market.room_to_ceiling >= 0
@@ -112,9 +117,10 @@
       <div class="figs">
         <div class="fig"><div class="key">Buy now</div><div class="value">${cents(market.buy_price)}</div><div class="hint">Executable ask</div></div>
         <div class="fig"><div class="key">Sell now</div><div class="value">${cents(market.sell_price)}</div><div class="hint">Executable bid</div></div>
-        <div class="fig"><div class="key">Net edge</div><div class="value ${modelClass}">${signedCents(market.edge)}</div><div class="hint">After execution costs · need ${cents(market.required_edge)} · buffer ${signedCents(market.edge_buffer)}</div></div>
+        <div class="fig"><div class="key">${edgeLabel}</div><div class="value ${modelClass}">${signedCents(market.edge)}</div><div class="hint">${edgeHint}</div></div>
         <div class="fig"><div class="key">Signal quality</div><div class="value">${market.confidence == null ? "—" : market.confidence.toFixed(0)+"/100"}</div><div class="hint">Data reliability · ${market.reference_sources} source family/families</div></div>
       </div>
+      ${whyNoEntry}
       <div class="guide">${guide} ${esc(market.consensus_method||"display-only")} consensus ${pct(market.consensus_probability)} · calibrated consensus ${calibration} · independent model ${independentModel} · uncertainty ${uncertainty} · P(net EV &gt; 0) ${positiveEv} · net EV ${netEv}. Spread ${cents(market.spread)} · ask depth ${market.ask_size == null ? "—" : market.ask_size.toFixed(1)+" shares"} · liquidity ${market.market_liquidity == null ? "—" : "$"+Number(market.market_liquidity).toLocaleString(undefined,{maximumFractionDigits:0})}.</div>
       <details class="why" data-detail-key="${detailKey}"${openDetails.has(detailKey) ? " open" : ""}><summary>What to look out for</summary>
         <ul><li>${ages}</li>${executionAudit}${qualityReason}${lineage}${gates}${market.reasons.map(reason => `<li>${esc(reason)}</li>`).join("")}${risks.map(risk => `<li class="risk">${esc(risk)}</li>`).join("")}</ul></details>
