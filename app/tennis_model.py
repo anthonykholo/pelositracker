@@ -38,7 +38,9 @@ def set_complete(home_games: int, away_games: int) -> bool:
     return high == 7 and low == 6
 
 
-@lru_cache(maxsize=None)
+# Bounded so an always-on service cannot leak memory: the cache key includes the
+# per-game probability ``g``, which is a distinct float for every match.
+@lru_cache(maxsize=100_000)
 def _set_win_prob(home_games: int, away_games: int, g: float) -> float:
     """P(favorite wins the current set) from games ``home-away``.
 
@@ -59,7 +61,7 @@ def _set_win_prob(home_games: int, away_games: int, g: float) -> float:
             + (1.0 - g) * _set_win_prob(home_games, away_games + 1, g))
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=100_000)
 def _race_prob(sets_home: int, sets_away: int, set_prob: float, need: int) -> float:
     """P(favorite reaches ``need`` sets first) with every remaining set won at a
     fixed per-set win probability ``set_prob``."""

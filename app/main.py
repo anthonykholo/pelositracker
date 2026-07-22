@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import secrets
 from pathlib import Path
+from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Request, Response, Depends, Form
 from fastapi.responses import FileResponse, StreamingResponse
@@ -365,7 +366,7 @@ def _tennis_model_probabilities(
     # Latency awareness: skip a score too stale to represent the execution-time
     # state; otherwise fold its age into the movement window.
     age = _tennis_state_age_seconds(event, as_of)
-    if age is not None and age > settings.max_state_age_seconds:
+    if age is None or age > settings.max_state_age_seconds:
         return {}, {}
     window = (age or 0.0) + settings.latency_budget_seconds
     sets_home, sets_away, games_home, games_away = parsed
@@ -388,10 +389,14 @@ def _tennis_model_probabilities(
 
 
 def _state_age_seconds(state: GameState, as_of: datetime) -> float | None:
-    """Seconds since a GameState was observed at the provider, or None."""
-    stamp = state.provider_timestamp or state.observed_at
-    if stamp is None:
+    """Seconds since a GameState was observed *at the provider*, or None when the
+    provider did not stamp it. Returning None (rather than a receipt-time age of
+    ~0) lets callers fail closed: we never treat state of unknown freshness as
+    fresh, since an old score is exactly the latency/adverse-selection hazard the
+    model must avoid."""
+    if not state.timestamp_trusted or state.provider_timestamp is None:
         return None
+    stamp = state.provider_timestamp
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     return max(0.0, (as_of - stamp).total_seconds())
@@ -436,7 +441,7 @@ def _lead_model_probabilities(
     if p0 is None or not 0 < p0 < 1:
         return {}, {}
     age = _state_age_seconds(state, as_of)
-    if age is not None and age > settings.max_state_age_seconds:
+    if age is None or age > settings.max_state_age_seconds:
         return {}, {}
     window = (age or 0.0) + settings.latency_budget_seconds
     lead = float(state.home_score) - float(state.away_score)
@@ -483,7 +488,7 @@ def _soccer_model_probabilities(
     if fraction is None:
         return {}, {}
     age = _state_age_seconds(state, as_of)
-    if age is not None and age > settings.max_state_age_seconds:
+    if age is None or age > settings.max_state_age_seconds:
         return {}, {}
     window = (age or 0.0) + settings.latency_budget_seconds
     lam_home, lam_away = rates
@@ -523,6 +528,57 @@ def _model_probabilities(
     return _lead_model_probabilities(event, signals, as_of=as_of)
 
 
+def _prematch_anchor(signals: list, event: Event, side: str,
+                     market_ok: Callable[[str], bool]) -> float | None:
+    """Pre-match model probability of the ``side`` (home/away/draw) selection on a
+    market the sport's model actually prices, or None. The ``market_ok`` guard
+    keeps a spread or total price from being captured as a win-probability anchor
+    (which would silently mis-calibrate the whole model for that event)."""
+    for signal in signals:
+        if _soccer_side(signal.outcome, event) != side:
+            continue
+        if not market_ok(signal.market):
+            continue
+        prob = signal.model_probability or 0.0
+        if 0.0 < prob < 1.0:
+            return float(prob)
+    return None
+
+
+def _is_moneyline_market(market: str) -> bool:
+    return line_type(market) == "moneyline"
+
+
+def _tennis_final_scores(event: Event) -> tuple[float, float] | None:
+    """Tennis match result as ``(sets_home, sets_away)`` from the final score
+    string, or None if it can't be resolved decisively.
+
+    The generic state parser keeps games-in-a-set in the GameState (a multi-set
+    final string does not even parse), so grading a tennis moneyline off
+    ``home_score``/``away_score`` compares set games, not the match winner. The
+    winner of the last completed set is the match winner, so the set count grades
+    it correctly."""
+    parsed = _tennis_score_now(event)
+    if parsed is None:
+        return None
+    sets_home, sets_away, _, _ = parsed
+    if sets_home == sets_away:
+        return None
+    return float(sets_home), float(sets_away)
+
+
+def _settle_scores(event: Event, states: list) -> tuple[float, float]:
+    """The ``(home, away)`` scores to grade an event by. Tennis is graded by set
+    count (see :func:`_tennis_final_scores`); every other sport uses the final
+    live score directly."""
+    if _is_tennis(event):
+        tennis = _tennis_final_scores(event)
+        if tennis is not None:
+            return tennis
+    state = states[-1]
+    return state.home_score, state.away_score
+
+
 def recompute(event_id: str, *, as_of: datetime) -> list:
     event = store.events.get(event_id)
     if event is None:  # event removed between emit and callback
@@ -541,38 +597,27 @@ def recompute(event_id: str, *, as_of: datetime) -> list:
     store.set_signals(event_id, signals)
     # Anchor an in-play model to the market's pre-match view: capture the home
     # win probability only at the start (or still pregame). Joining mid-match
-    # yields no anchor, so we never fabricate one.
-    def _home_anchor() -> float | None:
-        home_signal = next(
-            (signal for signal in signals
-             if _moneyline_side(signal.outcome, event) == "home"
-             and 0 < (signal.model_probability or 0) < 1),
-            None,
-        )
-        return float(home_signal.model_probability) if home_signal is not None else None
-
+    # yields no anchor, so we never fabricate one. The market guard keeps a
+    # spread/total price from being captured as the win-probability anchor.
     if settings.enable_tennis_model and _is_tennis(event) and prior.get("tennis_p0") is None:
         parsed = _tennis_score_now(event)
         if parsed is None or parsed == (0, 0, 0, 0):
-            anchor = _home_anchor()
+            anchor = _prematch_anchor(signals, event, "home", _is_tennis_moneyline)
             if anchor is not None:
                 prior["tennis_p0"] = anchor
     if (settings.enable_lead_model and not _is_tennis(event)
             and prior.get("prematch_home_p") is None):
         rule = league_rule(event.sport, event.league)
         if rule is not None and rule.key in LEAD_SPORT_PARAMS and _at_game_start(event):
-            anchor = _home_anchor()
+            anchor = _prematch_anchor(signals, event, "home", _is_moneyline_market)
             if anchor is not None:
                 prior["prematch_home_p"] = anchor
     if (settings.enable_soccer_model and _is_soccer(event)
             and "soccer_rates" not in prior and _at_game_start(event)):
-        def _side_anchor(side: str) -> float | None:
-            sig = next((s for s in signals
-                        if _soccer_side(s.outcome, event) == side
-                        and 0 < (s.model_probability or 0) < 1), None)
-            return float(sig.model_probability) if sig is not None else None
-
-        home_p, draw_p = _side_anchor("home"), _side_anchor("draw")
+        home_p = _prematch_anchor(signals, event, "home", _is_moneyline_market)
+        # A 1X2 draw is a result in its own right, so it is not filtered by the
+        # moneyline guard (its market label is the draw condition itself).
+        draw_p = _prematch_anchor(signals, event, "draw", lambda _market: True)
         if home_p is not None and draw_p is not None:
             # Store the inverted rates (or None if the prior is unusable) so we
             # neither re-invert every cycle nor retry a bad anchor forever.
@@ -652,7 +697,10 @@ async def finalize_event(event_id: str, *, canceled: bool = False) -> None:
         states = store.states.get(event_id) or []
         # The close mark is the last valid observation recorded before the
         # terminal gate closed. Never synthesize a fresh consensus after suspension.
-        winners = _winner_labels(event, states[-1].home_score, states[-1].away_score) \
+        # Tennis grades by set count, not games-in-a-set (see _settle_scores).
+        settle_home, settle_away = (
+            _settle_scores(event, states) if (event and states) else (0.0, 0.0))
+        winners = _winner_labels(event, settle_home, settle_away) \
             if (event and states and not canceled) else set()
 
         def _writes():
@@ -667,7 +715,7 @@ async def finalize_event(event_id: str, *, canceled: bool = False) -> None:
                 if winners:
                     ledger.settle_moneyline(event_id, winners)
             if account_book is not None and event is not None and states:
-                account_book.settle(event, states[-1].home_score, states[-1].away_score)
+                account_book.settle(event, settle_home, settle_away)
             if history_db is not None and event is not None:
                 prior = _pregame.get(event_id, {})
                 final_state = states[-1] if states else None
