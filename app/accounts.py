@@ -28,6 +28,9 @@ from .models import Event, Quote, Signal
 from .portfolio import Candidate, joint_kelly_stakes
 
 _MONEYLINE = {"moneyline", "h2h", "winner", "match_winner"}
+# Three-way markets where a tie is its own (Draw) outcome, so home/away lose on a
+# tie. Every other sport is two-way, where a tie resolves 50/50 instead.
+_DRAW_SPORTS = {"soccer"}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -296,17 +299,28 @@ def _matches(outcome: str, label: str) -> bool:
 
 
 def grade(market: str, outcome: str, home: str, away: str,
-          home_score: float, away_score: float) -> str | None:
-    """win | loss | push | None (ungradeable from the score, e.g. a player prop)."""
+          home_score: float, away_score: float, *, sport: str = "") -> str | None:
+    """win | loss | push | split | None.
+
+    ``split`` is a 50/50 resolution (each share worth $0.50): a tie in a two-way
+    market has no winning side, so it is neither a win/loss nor a stake-refunding
+    push. ``None`` means ungradeable from the score alone (e.g. a player prop).
+    This grades from the final score; it approximates -- not replaces -- the
+    venue's official resolution rules."""
     m = (market or "").lower()
     if m in _MONEYLINE:
         if home_score > away_score:
-            win = _matches(outcome, "home") or _matches(outcome, home)
-        elif away_score > home_score:
-            win = _matches(outcome, "away") or _matches(outcome, away)
-        else:
-            win = _matches(outcome, "draw")
-        return "win" if win else "loss"
+            return "win" if (_matches(outcome, "home") or _matches(outcome, home)) else "loss"
+        if away_score > home_score:
+            return "win" if (_matches(outcome, "away") or _matches(outcome, away)) else "loss"
+        # Tie: a Draw bet wins. In a three-way market (e.g. soccer) the Draw
+        # outcome won, so home/away lose; in a two-way market a tie has no side
+        # and resolves 50/50 -- never a double loss for both bettors.
+        if _matches(outcome, "draw"):
+            return "win"
+        if (sport or "").strip().casefold() in _DRAW_SPORTS:
+            return "loss"
+        return "split"
     point, side = quote_line_side(market, outcome, home, away)
     if point is not None and is_total_market(m) and side in ("over", "under"):
         total = home_score + away_score
@@ -899,12 +913,16 @@ class AccountBook:
                 updates = []
                 for row in rows:
                     verdict = grade(row["market"], row["outcome"], event.home, event.away,
-                                    home_score, away_score) or "void"
+                                    home_score, away_score, sport=event.sport) or "void"
                     if verdict == "win":
                         payout, pnl, result = row["shares"], row["shares"] - row["stake"], 1.0
                     elif verdict == "loss":
                         payout, pnl, result = 0.0, -row["stake"], 0.0
-                    else:
+                    elif verdict == "split":
+                        # 50/50 resolution: each share is worth $0.50.
+                        payout = 0.5 * row["shares"]
+                        pnl, result = payout - row["stake"], None
+                    else:  # push / void: stake refunded
                         payout, pnl, result = row["stake"], 0.0, None
                     credits[row["account"]] = credits.get(row["account"], 0.0) + payout
                     updates.append((verdict, result, pnl, now, row["id"]))

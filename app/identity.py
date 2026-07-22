@@ -23,6 +23,23 @@ def stable_id(kind: str, *parts: object) -> str:
     return str(uuid5(NAMESPACE_URL, f"pelositracker:{payload}"))
 
 
+def canonical_line(line_value: object | None) -> str | None:
+    """Alnum-safe token for a market line that PRESERVES the sign and decimal.
+
+    ``canonical_text`` keeps only ``[a-z0-9]``, so it collapses ``-6.5`` and
+    ``+6.5`` (and ``6.5``) to the same ``"6 5"`` -- which would make opposite
+    spread lines share a market identity. Encoding the sign as a word and the
+    point as ``p`` keeps the token alnum-safe (so it survives ``stable_id``'s own
+    ``canonical_text``) while remaining distinct: ``neg6p5`` vs ``pos6p5``."""
+    if line_value is None:
+        return None
+    try:
+        value = float(line_value)
+    except (TypeError, ValueError):
+        return canonical_text(line_value) or None
+    return f"{'neg' if value < 0 else 'pos'}{abs(value):g}".replace(".", "p")
+
+
 @dataclass(frozen=True, slots=True)
 class CanonicalParticipant:
     participant_id: str
@@ -72,7 +89,7 @@ class CanonicalMarket:
     @classmethod
     def create(cls, event_id: str, market_type: str, line_value: object | None,
                period_scope: str = "full_game") -> "CanonicalMarket":
-        line = None if line_value is None else canonical_text(line_value)
+        line = canonical_line(line_value)
         kind = canonical_text(market_type)
         scope = canonical_text(period_scope)
         return cls(stable_id("market", event_id, kind, line or "none", scope),

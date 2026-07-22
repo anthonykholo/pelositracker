@@ -6,6 +6,7 @@ from app.accounts import (
     AccountBook,
     Strategy,
     event_allowed,
+    grade,
     qualification_failures,
     qualifies,
     stake_for,
@@ -242,6 +243,36 @@ def test_model_bet_skips_a_provably_stale_quote(tmp_path):
         book.close()
     assert blocked == []          # 600s-old quote rejected at a 120s limit
     assert len(allowed) == 1      # same quote trades when the check is disabled
+
+
+def test_grade_two_way_tie_is_a_fifty_fifty_split_not_a_double_loss():
+    assert grade("moneyline", "Home", "Home", "Away", 2, 2) == "split"
+    assert grade("moneyline", "Away", "Home", "Away", 2, 2) == "split"
+
+
+def test_grade_three_way_tie_wins_the_draw_and_loses_the_sides():
+    assert grade("moneyline", "draw", "A", "B", 1, 1, sport="soccer") == "win"
+    assert grade("moneyline", "A", "A", "B", 1, 1, sport="soccer") == "loss"
+
+
+def test_grade_decisive_result_is_unchanged():
+    assert grade("moneyline", "Home", "Home", "Away", 3, 1) == "win"
+    assert grade("moneyline", "Away", "Home", "Away", 3, 1) == "loss"
+
+
+def test_settled_two_way_tie_pays_out_fifty_fifty(tmp_path):
+    book, event, signal, quote = _tennis_setup(tmp_path / "split.db", "tie-1")
+    try:
+        placed = book.place(event, [signal], [quote], model_probabilities={"token-home": 0.60})
+        assert len(placed) == 1
+        opened = book.account_bets("tennis")[0]
+        shares, stake = opened["shares"], opened["stake"]
+        book.settle(event, 2, 2)   # a tie in a two-way (tennis) market
+        settled = book.account_bets("tennis")[0]
+    finally:
+        book.close()
+    assert settled["status"] == "split"
+    assert settled["pnl"] == pytest.approx(0.5 * shares - stake)
 
 
 def test_model_bet_skips_a_quarantined_quote(tmp_path):

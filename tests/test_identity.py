@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from app.identity import (CanonicalEvent, MappingStatus, ProviderEventCandidate,
-                          resolve_event_mapping)
+from app.identity import (CanonicalEvent, CanonicalMarket, MappingStatus,
+                          ProviderEventCandidate, resolve_event_mapping)
 
 
 START = datetime(2026, 7, 20, 19, tzinfo=timezone.utc)
@@ -14,6 +14,17 @@ def test_canonical_identity_is_stable_across_case_and_punctuation():
                                    "new-york knicks", "BOSTON CELTICS")
     assert first.canonical_event_id == second.canonical_event_id
     assert first.home.participant_id == second.home.participant_id
+
+
+def test_opposite_spread_lines_get_distinct_market_identities():
+    event = "event-1"
+    minus = CanonicalMarket.create(event, "spread", -6.5)
+    plus = CanonicalMarket.create(event, "spread", +6.5)
+    even = CanonicalMarket.create(event, "spread", 0)
+    assert minus.market_id != plus.market_id      # sign must not collapse
+    # +6.5 and unsigned 6.5 are the same line and should agree.
+    assert plus.market_id == CanonicalMarket.create(event, "spread", "+6.5").market_id
+    assert len({minus.market_id, plus.market_id, even.market_id}) == 3
 
 
 def test_resolver_rejects_same_teams_at_wrong_start():
