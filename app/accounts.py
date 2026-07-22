@@ -340,16 +340,20 @@ def _book_levels(values: tuple[tuple[float, float], ...]) -> list[BookLevel]:
 
 
 def _quote_is_stale(quote: Quote, now: float, max_age_seconds: float) -> bool:
-    """True when a quote is provably older than ``max_age_seconds`` (0 disables).
+    """True when a quote must not back a model entry on freshness grounds (an age
+    of 0 disables the gate).
 
-    The odds engine applies a max-age gate to consensus signals, but model-backed
-    bets bypass that gate, so this restores an explicit quote-freshness check for
-    them. Untrusted timestamps are not treated as stale (to avoid rejecting a
-    feed that omits provider time); the book-hash match still ties the simulated
-    fill to the live order book."""
-    if max_age_seconds <= 0 or not quote.timestamp_trusted or quote.provider_timestamp is None:
+    The odds engine applies a max-age + trusted-time gate to consensus signals,
+    but model-backed bets bypass the engine action, so this restores it for them.
+    With the gate on, an untrusted or absent provider timestamp, or a timestamp in
+    the future, is treated as stale (fail closed): we never enter on data of
+    unknown freshness. The book-hash match still ties the fill to the live book."""
+    if max_age_seconds <= 0:
         return False
-    return (now - quote.provider_timestamp.timestamp()) > max_age_seconds
+    if not quote.timestamp_trusted or quote.provider_timestamp is None:
+        return True
+    age = now - quote.provider_timestamp.timestamp()
+    return age > max_age_seconds or age < -5.0
 
 
 def _latest_quotes(quotes: list[Quote]) -> dict[str, Quote]:
@@ -677,6 +681,10 @@ class AccountBook:
                             restricted=quote.restricted,
                             accepting_orders=quote.accepting_orders,
                             depth_complete=quote.depth_complete,
+                            # A quarantined (ambiguous-identity) quote must never
+                            # fill -- the engine action gate is bypassed on the
+                            # model-backed path, so enforce it at the fill instead.
+                            identity_ambiguous=quote.quarantined,
                         )
                         if (not execution.complete or execution.effective_probability is None
                                 or execution.vwap is None):

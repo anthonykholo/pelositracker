@@ -244,6 +244,36 @@ def test_model_bet_skips_a_provably_stale_quote(tmp_path):
     assert len(allowed) == 1      # same quote trades when the check is disabled
 
 
+def test_model_bet_skips_a_quarantined_quote(tmp_path):
+    book, event, signal, _ = _tennis_setup(tmp_path / "quar.db", "tennis-quar")
+    now = datetime.now(timezone.utc)
+    # Fresh, trusted timestamp so ONLY the ambiguous-identity guard can block it.
+    quote = Quote(event.id, "moneyline", "Alcaraz", 0.50, "Polymarket", token_id="token-home",
+                  ask=.50, bid=.48, ask_levels=((.50, 10_000.0),), bid_levels=((.48, 10_000.0),),
+                  depth_complete=True, fee_rate=0.0, provider_timestamp=now, quarantined=True)
+    try:
+        placed = book.place(event, [signal], [quote], as_of=now,
+                            model_probabilities={"token-home": 0.60}, max_quote_age_seconds=120)
+    finally:
+        book.close()
+    assert placed == []           # quarantined identity must never fill on paper
+
+
+def test_model_bet_skips_an_untrusted_timestamp_quote_when_the_freshness_gate_is_on(tmp_path):
+    book, event, signal, quote = _tennis_setup(tmp_path / "notrust.db", "tennis-notrust")
+    now = datetime.now(timezone.utc)
+    assert quote.timestamp_trusted is False   # executable_quote sets no provider time
+    try:
+        blocked = book.place(event, [signal], [quote], as_of=now,
+                             model_probabilities={"token-home": 0.60}, max_quote_age_seconds=120)
+        allowed = book.place(event, [signal], [quote], as_of=now,
+                             model_probabilities={"token-home": 0.60}, max_quote_age_seconds=0)
+    finally:
+        book.close()
+    assert blocked == []          # unknown freshness is failed closed when the gate is on
+    assert len(allowed) == 1      # ...but allowed when the freshness gate is disabled
+
+
 def test_model_backed_tennis_bet_places_then_settles_as_a_win(tmp_path):
     book, event, signal, quote = _tennis_setup(tmp_path / "life.db", "tennis-life")
     try:
