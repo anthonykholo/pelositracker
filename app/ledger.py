@@ -13,6 +13,7 @@ need data the system does not yet ingest.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 import hashlib
@@ -21,6 +22,19 @@ from typing import Iterable
 
 from .database import Database
 from .models import Event, Signal
+
+
+def _retention_seconds() -> float:
+    """Decision-audit retention window; keeps the ledger from exhausting a small
+    managed database (e.g. a 500 MB Supabase free tier). Floored at one hour."""
+    try:
+        days = float(os.getenv("DECISION_MARKS_RETENTION_DAYS", "7"))
+    except ValueError:
+        days = 7.0
+    return max(3600.0, days * 86400.0)
+
+
+_PRUNE_THROTTLE_SECONDS = 600.0
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS bets (
@@ -143,6 +157,8 @@ class Ledger:
         self.backend = self._db.backend
         self._conn = self._db.connection
         self._lock = threading.Lock()
+        self._last_prune = 0.0
+        self._retention_seconds = _retention_seconds()
         with self._lock:
             self._db.initialize(_SCHEMA, component="ledger", version=1)
             self._db.initialize(_SCHEMA_V2, component="ledger", version=2)
@@ -286,7 +302,8 @@ class Ledger:
                          signal.engine_version, signal.configuration_hash,
                          signal.source_mapping_version, signal.model_version,
                          signal.calibration_version, signal.execution_policy_version,
-                         signal.input_snapshot_json, signal.token_id,
+                         (signal.input_snapshot_json
+                          if signal.action == "PAPER_BET" else None), signal.token_id,
                           signal.order_book_snapshot_id, signal.requested_cash,
                           signal.execution_vwap, signal.execution_fee,
                           signal.calibrated_consensus_probability, signal.uncertainty_low,
@@ -371,6 +388,16 @@ class Ledger:
                              order_id, filled_cash, filled_shares,
                              row[7], float(row[22]), now),
                         )
+                # Bound the decision-audit log so it cannot exhaust a small
+                # managed database (the full input snapshot is already kept only
+                # for PAPER_BET rows). Pruned on a throttled cadence in the same
+                # transaction.
+                if now - self._last_prune > _PRUNE_THROTTLE_SECONDS:
+                    self._db.execute(
+                        cur, "DELETE FROM decision_marks WHERE as_of < %s",
+                        (now - self._retention_seconds,),
+                    )
+                    self._last_prune = now
             return inserted
 
     def snapshot_closing(self, event_id: str,

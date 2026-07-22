@@ -63,3 +63,20 @@ a non-eligible research kernel and cannot be promoted by an artifact. Registry
 v1 recognizes only a fitted NBA moneyline logistic contract with verified
 possession, overtime, pregame, and phase-interaction inputs; the repository
 ships no fitted artifact for it.
+
+## Paper-harness in-play tennis model (display-grade)
+
+`ENABLE_TENNIS_MODEL` is a separate, opt-in **paper-harness** mechanism, not a
+promoted registry artifact and not subject to the validated contract above. It
+exists because tennis has no reference-book feed here, so the odds engine can
+never estimate an edge and every tennis selection stays single-source `WATCH`.
+
+When enabled, `app.tennis_model` computes an independent in-play win
+probability from the live set/game score, anchored to the market's pre-match
+price captured at the start of the match (score 0-0; joining mid-match yields
+no anchor and no trades). Paper bots trade the edge of that model versus the
+executable Polymarket price via `AccountBook.place(model_probabilities=...)`;
+the odds engine's honest `WATCH` verdict is unchanged. Documented
+simplifications: serve-neutral (the feed exposes no server), tiebreak
+approximated as one game, independent sets, best-of-three by default. It is a
+demonstration/strategy-exercise model, not validated calibration.

@@ -42,6 +42,107 @@ def test_bot_rejects_every_hard_engine_or_execution_failure(changes, expected):
     assert any(expected in reason for reason in qualification_failures(strategy, signal))
 
 
+def _uncalibrated_gates(reference_ok: bool = True):
+    """Gate results the Rust engine emits with no calibration artifact: real
+    gates evaluated, calibration/policy gates left ``unknown``."""
+    return [
+        {"code": "provider_freshness", "passed": True, "status": "pass"},
+        {"code": "reference_source_support", "passed": reference_ok,
+         "status": "pass" if reference_ok else "fail"},
+        {"code": "market_identity", "passed": True, "status": "pass"},
+        {"code": "market_status", "passed": True, "status": "pass"},
+        {"code": "executable_fill", "passed": True, "status": "pass"},
+        {"code": "net_edge", "passed": True, "status": "pass"},
+        {"code": "signal_quality", "passed": True, "status": "pass"},
+        {"code": "calibration_support", "passed": None, "status": "unknown"},
+        {"code": "uncertainty_support", "passed": None, "status": "unknown"},
+    ]
+
+
+def test_uncalibrated_watch_signal_trades_only_with_opt_in():
+    strategy = Strategy("test", edge_threshold=0)
+    signal = valid_signal(action="WATCH", calibrated_consensus_probability=None,
+                          gate_results=_uncalibrated_gates())
+    # Default: the engine's honest WATCH verdict stands; no paper bet.
+    assert not qualifies(strategy, signal)
+    assert any("engine gates" in reason
+               for reason in qualification_failures(strategy, signal))
+    # Opt-in: a fundamentally sound, uncalibrated gross-gap edge is tradeable.
+    assert qualifies(strategy, signal, allow_uncalibrated=True)
+
+
+def test_uncalibrated_opt_in_still_blocks_a_real_gate_failure():
+    strategy = Strategy("test", edge_threshold=0)
+    signal = valid_signal(action="WATCH", calibrated_consensus_probability=None,
+                          gate_results=_uncalibrated_gates(reference_ok=False))
+    assert not qualifies(strategy, signal, allow_uncalibrated=True)
+
+
+def test_uncalibrated_opt_in_never_admits_a_signal_with_no_gate_record():
+    strategy = Strategy("test", edge_threshold=0)
+    signal = valid_signal(action="WATCH", calibrated_consensus_probability=None,
+                          gate_results=[])
+    assert not qualifies(strategy, signal, allow_uncalibrated=True)
+
+
+def _single_source_watch_signal(event, **overrides):
+    """A tennis-style signal the engine could not price (no reference books)."""
+    values = dict(
+        event_id=event.id, market="moneyline", outcome=event.home,
+        action="WATCH", n_reference_sources=0, edge=0.0, required_edge=0.0,
+        market_probability=0.50, model_probability=0.0,
+        calibrated_consensus_probability=None, consensus_probability=0.0,
+        gate_results=[{"code": "reference_source_support",
+                       "passed": False, "status": "fail"}],
+        token_id="token-home", fillable_size=1000,
+    )
+    values.update(overrides)
+    return valid_signal(**values)
+
+
+def test_model_backed_probability_trades_a_single_source_watch_signal(tmp_path):
+    book = AccountBook(str(tmp_path / "accounts.db"))
+    strategy = Strategy("tennis", sizing="flat", flat_stake=50.0, start_bankroll=1000.0,
+                        edge_threshold=0.0, max_stake_pct=1.0, max_event_exposure_pct=1.0,
+                        max_sport_exposure_pct=1.0, max_correlated_exposure_pct=1.0,
+                        max_total_exposure_pct=1.0)
+    book.seed([strategy])
+    event = Event("Alcaraz vs Sinner", "tennis", "Alcaraz", "Sinner", id="tennis-1")
+    signal = _single_source_watch_signal(event)
+    quote = executable_quote(event, "token-home", "moneyline", "Alcaraz", ask=.50, bid=.48)
+    try:
+        # No model probability: the engine's WATCH stands, nothing is placed.
+        assert book.place(event, [signal], [quote]) == []
+        # An independent model says 60% vs a 50% ask -> a real 10% edge, traded.
+        placed = book.place(event, [signal], [quote],
+                            model_probabilities={"token-home": 0.60})
+        rows = book.account_bets("tennis")
+    finally:
+        book.close()
+    assert len(placed) == 1
+    assert placed[0]["edge"] == pytest.approx(0.10, abs=1e-6)
+    assert rows[0]["model_prob"] == pytest.approx(0.60)
+    assert rows[0]["edge"] == pytest.approx(0.10, abs=1e-6)
+
+
+def test_model_backed_bet_still_respects_the_edge_floor(tmp_path):
+    book = AccountBook(str(tmp_path / "accounts.db"))
+    strategy = Strategy("tennis", sizing="flat", flat_stake=50.0, start_bankroll=1000.0,
+                        edge_threshold=0.05, max_stake_pct=1.0, max_event_exposure_pct=1.0,
+                        max_total_exposure_pct=1.0)
+    book.seed([strategy])
+    event = Event("Alcaraz vs Sinner", "tennis", "Alcaraz", "Sinner", id="tennis-2")
+    signal = _single_source_watch_signal(event)
+    quote = executable_quote(event, "token-home", "moneyline", "Alcaraz", ask=.50, bid=.48)
+    try:
+        # Model edge of only 2% is below the 5% strategy floor -> no bet.
+        placed = book.place(event, [signal], [quote],
+                            model_probabilities={"token-home": 0.52})
+    finally:
+        book.close()
+    assert placed == []
+
+
 def test_validated_polymarket_signal_qualifies_and_depth_caps_stake():
     strategy = Strategy("flat", edge_threshold=.05, sizing="flat", flat_stake=100)
     signal = valid_signal(fillable_size=40)  # 40 shares * $0.50 = $20 available

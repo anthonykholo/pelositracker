@@ -52,6 +52,21 @@ _SPORT_KEYS = {
     "champions league": ("soccer", "soccer_uefa_champs_league"),
     "world cup": ("soccer", "soccer_fifa_world_cup"),
     "mls": ("soccer", "soccer_usa_mls"),
+    # Tennis and esports are recognized as sports for labeling, correlation
+    # grouping, and per-sport exposure caps. No usable reference-book feed
+    # exists for them here (The Odds API tennis is per-tournament with no
+    # evergreen key and has no esports; Action Network/Pinnacle do not cover
+    # them either), so odds_api_sport is None and they stay single-source
+    # unless an independent price feed or model is added.
+    "tennis": ("tennis", None),
+    "atp": ("tennis", None),
+    "wta": ("tennis", None),
+    "esports": ("esports", None),
+    "counter-strike": ("esports", None),
+    "cs2": ("esports", None),
+    "league of legends": ("esports", None),
+    "dota": ("esports", None),
+    "valorant": ("esports", None),
 }
 
 

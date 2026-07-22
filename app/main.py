@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 
 from .engine import SignalEngine
 from . import __version__, backtest
-from .accounts import AccountBook, DEFAULT_STRATEGIES
+from .accounts import AccountBook, DEFAULT_STRATEGIES, line_type
+from .tennis_model import game_prob_from_prematch, match_win_prob, parse_tennis_score
 from .diagnostics import edge_health
 from .advice import market_views, position_views
 from .history import HistoryDB
@@ -256,6 +257,78 @@ async def on_quotes(quotes: list[Quote]):
         await record(quotes[0].event_id, as_of=max(quote.processed_at for quote in quotes))
 
 
+def _is_tennis(event: Event) -> bool:
+    return (event.sport or "").strip().casefold() == "tennis"
+
+
+def _tennis_side(outcome: str, event: Event) -> str | None:
+    """Map a moneyline outcome label to home/away for a tennis match.
+
+    Handles Polymarket's binary shape where one side is the player name and the
+    other is the negated condition (``"Not <player>"``)."""
+    label = (outcome or "").strip().casefold()
+    home = (event.home or "").strip().casefold()
+    away = (event.away or "").strip().casefold()
+    if label in ("home", home):
+        return "home"
+    if label in ("away", away):
+        return "away"
+    if label.startswith("not "):
+        remainder = label[4:].strip()
+        if remainder in ("home", home):
+            return "away"
+        if remainder in ("away", away):
+            return "home"
+    return None
+
+
+def _is_tennis_moneyline(market: str) -> bool:
+    """True for either side of a tennis win market, including Polymarket's
+    ``"moneyline condition"`` label on the negated binary outcome."""
+    return line_type(market) == "moneyline" or (
+        market or "").strip().casefold() == "moneyline condition"
+
+
+def _tennis_score_now(event: Event) -> tuple[int, int, int, int] | None:
+    """Parse the latest live tennis score cached from the sports feed."""
+    status = _sports_status.get(event.polymarket_slug or "")
+    if not status:
+        return None
+    event_state = status.get("eventState")
+    source = event_state if isinstance(event_state, dict) else status
+    score = str(source.get("score") or status.get("score") or "")
+    period = str(source.get("period") or status.get("period") or "")
+    if not score:
+        return None
+    return parse_tennis_score(score, period)
+
+
+def _tennis_model_probabilities(event: Event, signals: list) -> dict[str, float]:
+    """Independent in-play win probabilities per Polymarket token for a tennis
+    match: pre-match anchor propagated through the live set/game score. Empty
+    unless the model is enabled, the event is tennis, we captured a clean
+    pre-match anchor, and a live score is available."""
+    if not settings.enable_tennis_model or not _is_tennis(event):
+        return {}
+    parsed = _tennis_score_now(event)
+    if parsed is None:
+        return {}
+    p0 = _pregame.get(event.id, {}).get("tennis_p0")
+    if p0 is None or not 0 < p0 < 1:
+        return {}
+    sets_home, sets_away, games_home, games_away = parsed
+    g = game_prob_from_prematch(p0)
+    pm_home = match_win_prob(sets_home, sets_away, games_home, games_away, g)
+    probabilities: dict[str, float] = {}
+    for signal in signals:
+        if not signal.token_id or not _is_tennis_moneyline(signal.market):
+            continue
+        side = _tennis_side(signal.outcome, event)
+        if side is not None:
+            probabilities[signal.token_id] = pm_home if side == "home" else 1.0 - pm_home
+    return probabilities
+
+
 def recompute(event_id: str, *, as_of: datetime) -> list:
     event = store.events.get(event_id)
     if event is None:  # event removed between emit and callback
@@ -272,6 +345,20 @@ def recompute(event_id: str, *, as_of: datetime) -> list:
                               pregame_spread=prior["spread"], pregame_total=prior["total"],
                               as_of=as_of, canonical_event_id=event.canonical_event_id)
     store.set_signals(event_id, signals)
+    # Anchor the tennis model to the market's pre-match view: capture the home
+    # win probability only while the match is at its start (score 0-0) or still
+    # pregame. Joining mid-match yields no anchor, so we never fabricate one.
+    if settings.enable_tennis_model and _is_tennis(event) and prior.get("tennis_p0") is None:
+        parsed = _tennis_score_now(event)
+        if parsed is None or parsed == (0, 0, 0, 0):
+            home_signal = next(
+                (signal for signal in signals
+                 if _tennis_side(signal.outcome, event) == "home"
+                 and 0 < (signal.model_probability or 0) < 1),
+                None,
+            )
+            if home_signal is not None:
+                prior["tennis_p0"] = float(home_signal.model_probability)
     return signals
 
 
@@ -299,8 +386,11 @@ async def record(event_id: str, *, as_of: datetime | None = None) -> None:
                 if paper_event.get("webhook_url"):
                     _schedule_notification(paper_event)
             if signals:
+                model_probabilities = _tennis_model_probabilities(event, signals)
                 placed_bets = await asyncio.to_thread(
-                    account_book.place, event, signals, quotes, as_of=decision_at
+                    account_book.place, event, signals, quotes, as_of=decision_at,
+                    allow_uncalibrated=settings.allow_uncalibrated_paper,
+                    model_probabilities=model_probabilities,
                 )
                 for paper_event in placed_bets:
                     if paper_event.get("webhook_url"):

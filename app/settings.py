@@ -55,6 +55,8 @@ class Settings:
     confidence_threshold: float
     edge_threshold: float
     kelly_fraction: float
+    allow_uncalibrated_paper: bool
+    enable_tennis_model: bool
     odds_api_key: str
     odds_regions: str
     odds_markets: str
@@ -85,6 +87,8 @@ class Settings:
             confidence_threshold=_float(values, "SIGNAL_CONFIDENCE_THRESHOLD", 0.0),
             edge_threshold=_float(values, "SIGNAL_EDGE_THRESHOLD", 0.0),
             kelly_fraction=_float(values, "SIGNAL_KELLY_FRACTION", 0.25),
+            allow_uncalibrated_paper=_bool(values, "PAPER_ALLOW_UNCALIBRATED", False),
+            enable_tennis_model=_bool(values, "ENABLE_TENNIS_MODEL", False),
             odds_api_key=values.get("THE_ODDS_API_KEY", "").strip(),
             odds_regions=values.get("ODDS_REGIONS", "us").strip(),
             odds_markets=values.get("ODDS_MARKETS", "h2h,spreads,totals").strip(),

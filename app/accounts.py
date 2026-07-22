@@ -192,10 +192,32 @@ def _correlation_group(event: Event, signal: Signal) -> str:
     return f"{event.id}:{group}"
 
 
-def qualification_failures(strategy: Strategy, signal: Signal) -> list[str]:
+def _uncalibrated_eligible(signal: Signal) -> bool:
+    """True when a WATCH signal is held back *only* by a missing calibration artifact.
+
+    Every engine gate that was actually evaluated (``pass``/``fail``) must pass;
+    only the calibration/policy gates may be ``unknown`` (which is exactly what
+    the Rust engine reports when no versioned artifact is installed). This lets
+    an opt-in paper harness trade a fundamentally sound, uncalibrated gross-gap
+    edge without loosening any freshness, source-count, identity, execution, or
+    edge-floor requirement. It never fires once a real calibration policy is
+    installed, because such a signal would already carry action ``PAPER_BET``
+    (and a non-null calibrated probability).
+    """
+    if signal.calibrated_consensus_probability is not None:
+        return False
+    evaluated = [gate for gate in (signal.gate_results or [])
+                 if gate.get("passed") is not None]
+    return bool(evaluated) and all(gate.get("passed") for gate in evaluated)
+
+
+def qualification_failures(strategy: Strategy, signal: Signal, *,
+                           allow_uncalibrated: bool = False) -> list[str]:
     """Explain why a strategy must not paper-buy a signal."""
     failures = []
-    if signal.action != "PAPER_BET":
+    action_ready = signal.action == "PAPER_BET" or (
+        allow_uncalibrated and _uncalibrated_eligible(signal))
+    if not action_ready:
         failures.append("engine gates did not clear")
     if signal.quote_source.casefold() != "polymarket":
         failures.append("not an executable Polymarket selection")
@@ -214,8 +236,30 @@ def qualification_failures(strategy: Strategy, signal: Signal) -> list[str]:
     return failures
 
 
-def qualifies(strategy: Strategy, signal: Signal) -> bool:
-    return not qualification_failures(strategy, signal)
+def qualifies(strategy: Strategy, signal: Signal, *,
+              allow_uncalibrated: bool = False) -> bool:
+    return not qualification_failures(
+        strategy, signal, allow_uncalibrated=allow_uncalibrated)
+
+
+def model_backed_failures(strategy: Strategy, signal: Signal) -> list[str]:
+    """Gate a selection whose decision probability comes from an independent
+    model (e.g. the in-play tennis model) rather than an odds consensus.
+
+    The model *is* the second opinion, so the engine action and reference-source
+    gates do not apply. Everything else that protects execution still does: it
+    must be an executable Polymarket price on a market the strategy allows. The
+    actual edge (model probability minus the simulated fill) is enforced in
+    :meth:`AccountBook.place` against the strategy and engine floors.
+    """
+    failures = []
+    if signal.quote_source.casefold() != "polymarket":
+        failures.append("not an executable Polymarket selection")
+    if not 0 < signal.market_probability < 1:
+        failures.append("invalid executable price")
+    if not market_allowed(strategy, signal.market):
+        failures.append("market is disabled for this strategy")
+    return failures
 
 
 def stake_for(strategy: Strategy, signal: Signal, bankroll: float) -> float:
@@ -442,9 +486,25 @@ class AccountBook:
                 return int(cur.fetchone()[0])
 
     def place(self, event: Event, signals: list[Signal], quotes: list[Quote] | None = None,
-              *, as_of: datetime | float | None = None) -> list[dict]:
-        """Open paper positions only after an exact full-depth simulated fill."""
+              *, as_of: datetime | float | None = None,
+              allow_uncalibrated: bool = False,
+              model_probabilities: dict[str, float] | None = None) -> list[dict]:
+        """Open paper positions only after an exact full-depth simulated fill.
+
+        ``allow_uncalibrated`` (opt-in, off by default) additionally admits
+        signals the engine holds at WATCH solely for a missing calibration
+        artifact; every other engine gate and the full-depth fill still apply.
+
+        ``model_probabilities`` maps a Polymarket ``token_id`` to an independent
+        model's win probability (e.g. the in-play tennis model). For those
+        tokens the model replaces the odds consensus as the decision basis, so
+        the engine action and reference-source gates are waived, but the
+        executable-price checks, full-depth fill, exposure caps, and edge floor
+        still apply. This is how single-source sports (tennis) trade a real
+        edge instead of a fabricated one.
+        """
         now = _timestamp(as_of)
+        model_probabilities = model_probabilities or {}
         quote_by_token = _latest_quotes(quotes or [])
         placed_bets = []
         with self._lock:
@@ -477,8 +537,14 @@ class AccountBook:
                                 event, signal.market, signal.outcome):
                             continue
                         quote = quote_by_token.get(signal.token_id)
-                        if quote is None or signal.market_probability <= 0 \
-                                or not qualifies(strategy, signal):
+                        if quote is None or signal.market_probability <= 0:
+                            continue
+                        model_override = model_probabilities.get(signal.token_id)
+                        if model_override is not None:
+                            if model_backed_failures(strategy, signal):
+                                continue
+                        elif not qualifies(strategy, signal,
+                                           allow_uncalibrated=allow_uncalibrated):
                             continue
                         if (signal.order_book_snapshot_id
                                 and signal.order_book_snapshot_id != quote.book_hash):
@@ -524,8 +590,9 @@ class AccountBook:
                         stake = float(execution.filled_cash)
                         shares = float(execution.filled_shares)
                         entry_price = float(execution.effective_probability)
-                        model_probability = _decision_probability(signal)
-                        if model_probability is None:
+                        model_probability = (model_override if model_override is not None
+                                             else _decision_probability(signal))
+                        if model_probability is None or not 0 < model_probability < 1:
                             continue
                         actual_edge = model_probability - entry_price
                         if actual_edge < max(signal.required_edge, strategy.edge_threshold):
