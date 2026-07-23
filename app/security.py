@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -88,17 +89,24 @@ class SlidingWindowLimiter:
     def __init__(self, limit: int, window_seconds: float):
         self.limit = limit
         self.window_seconds = window_seconds
-        self._attempts: dict[str, list[float]] = {}
+        # One bounded FIFO of hit timestamps per key. Expired hits are dropped
+        # from the left in place rather than rebuilding the whole list on every
+        # call, which removes avoidable allocation churn on this hot path while
+        # keeping identical sliding-window semantics.
+        self._attempts: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
     def allow(self, key: str, *, now: float | None = None) -> bool:
         instant = time.monotonic() if now is None else now
         cutoff = instant - self.window_seconds
         with self._lock:
-            attempts = [value for value in self._attempts.get(key, []) if value > cutoff]
-            if len(attempts) >= self.limit:
+            attempts = self._attempts.get(key)
+            if attempts is None:
+                attempts = deque()
                 self._attempts[key] = attempts
+            while attempts and attempts[0] <= cutoff:
+                attempts.popleft()
+            if len(attempts) >= self.limit:
                 return False
             attempts.append(instant)
-            self._attempts[key] = attempts
             return True

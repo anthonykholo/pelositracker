@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 from datetime import datetime
 from typing import Any
 
@@ -156,10 +157,21 @@ class SignalEngine:
         independent_model_policies = self._independent_model_policies(
             quotes, sport, league
         )
-        quote_payloads = [
+        # The store retains up to a couple thousand quotes per event, but the
+        # native engine keeps only the freshest valid quote per
+        # (comparison_market, comparison_outcome, comparison_source) before any
+        # de-vig or pricing (see native_engine::evaluate). Collapsing to that
+        # same set here — instead of fanning full order-book depth out over
+        # every retained duplicate — keeps the request, the persisted
+        # input-snapshot, and the JSON round-trip proportional to the number of
+        # live selections rather than the history depth, without changing the
+        # decision set (the engine re-applies the identical reduction). It also
+        # makes the execution-audit lookup below unambiguous: exactly one
+        # surviving payload per selection, the one the engine actually priced.
+        quote_payloads = self._freshest_valid_payloads([
             self._quote_payload(q, home_outcome, away_outcome, self.paper_notional)
             for q in quotes
-        ]
+        ])
         configuration = {
             "confidence_threshold": self.confidence_threshold,
             "edge_threshold": self.edge_threshold,
@@ -360,6 +372,59 @@ class SignalEngine:
             "point": point,
             "side": side,
         }
+
+    @staticmethod
+    def _freshest_valid_payloads(payloads: list[dict]) -> list[dict]:
+        """Keep the freshest valid quote per selection, matching the native
+        engine's own reduction (native_engine::evaluate) byte-for-byte.
+
+        The native engine drops quotes with an out-of-range probability/size and
+        then keeps, per (comparison_market, comparison_outcome,
+        comparison_source), the one with the greatest ``observed_at`` (ties keep
+        the first seen). Reducing to that exact set before serialization is
+        idempotent through the engine — it re-runs the same reduction — so the
+        decisions are unchanged, but a stale quote's book depth is no longer
+        carried through the request, the decision hash input, or the persisted
+        input snapshot. The probability/size bounds below mirror the Rust
+        ``valid_probability``/``valid_size`` checks; keeping them identical is
+        what preserves the freshest-*valid* fallback when the very newest quote
+        for a selection is unusable.
+        """
+        def _probability(value: object) -> bool:
+            return (isinstance(value, (int, float)) and math.isfinite(value)
+                    and 0.0 < value < 1.0)
+
+        def _size(value: object) -> bool:
+            return isinstance(value, (int, float)) and math.isfinite(value) and value >= 0.0
+
+        def _valid(payload: dict) -> bool:
+            if not _probability(payload.get("probability")):
+                return False
+            ask = payload.get("ask")
+            if ask is not None and not _probability(ask):
+                return False
+            bid = payload.get("bid")
+            if bid is not None and (not (isinstance(bid, (int, float)) and math.isfinite(bid))
+                                    or not 0.0 <= bid < 1.0):
+                return False
+            ask_size = payload.get("ask_size")
+            if ask_size is not None and not _size(ask_size):
+                return False
+            liquidity = payload.get("liquidity")
+            if liquidity is not None and not _size(liquidity):
+                return False
+            return True
+
+        freshest: dict[tuple[str, str, str], dict] = {}
+        for payload in payloads:
+            if not _valid(payload):
+                continue
+            key = (payload["comparison_market"], payload["comparison_outcome"],
+                   payload["comparison_source"])
+            current = freshest.get(key)
+            if current is None or payload["observed_at"] > current["observed_at"]:
+                freshest[key] = payload
+        return list(freshest.values())
 
     @staticmethod
     def _source_key(source: str) -> str:

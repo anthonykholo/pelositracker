@@ -489,17 +489,48 @@ class Ledger:
                     (status, now, event_id),
                 )
 
-    def all_bets(self) -> list[dict]:
-        with self._lock:
-            with self._db.cursor(dict_rows=True) as cur:
-                self._db.execute(cur, "SELECT * FROM bets ORDER BY entry_ts")
-                return [dict(row) for row in cur.fetchall()]
+    def all_bets(self, *, since_ts: float | None = None,
+                 limit: int | None = None) -> list[dict]:
+        """All recorded entry snapshots, oldest first.
 
-    def all_decisions(self) -> list[dict]:
-        """Return every evaluated opportunity, including WATCH/rejected rows."""
+        ``since_ts``/``limit`` are optional bounds (default ``None`` keeps the
+        full history) so a caller charting or paging a large ledger can hold a
+        page-sized result instead of every row a long-running deployment has
+        accumulated."""
+        return self._select_rows(
+            "SELECT * FROM bets", "entry_ts", since_ts=since_ts, limit=limit
+        )
+
+    def all_decisions(self, *, since_ts: float | None = None,
+                      limit: int | None = None) -> list[dict]:
+        """Return every evaluated opportunity, including WATCH/rejected rows.
+
+        ``since_ts``/``limit`` bound the scan as in :meth:`all_bets`; both
+        default to ``None`` (return everything, unchanged)."""
+        return self._select_rows(
+            "SELECT * FROM decision_marks", "as_of", since_ts=since_ts, limit=limit
+        )
+
+    def _select_rows(self, select: str, order_column: str, *,
+                     since_ts: float | None, limit: int | None) -> list[dict]:
+        clauses = ""
+        params: list = []
+        if since_ts is not None:
+            clauses += f" WHERE {order_column} >= %s"
+            params.append(since_ts)
         with self._lock:
             with self._db.cursor(dict_rows=True) as cur:
-                self._db.execute(cur, "SELECT * FROM decision_marks ORDER BY as_of")
+                if limit is not None:
+                    params.append(limit)
+                    self._db.execute(
+                        cur,
+                        f"{select}{clauses} ORDER BY {order_column} DESC LIMIT %s",
+                        tuple(params),
+                    )
+                    return [dict(row) for row in reversed(cur.fetchall())]
+                self._db.execute(
+                    cur, f"{select}{clauses} ORDER BY {order_column}", tuple(params)
+                )
                 return [dict(row) for row in cur.fetchall()]
 
     def event_bets(self, event_id: str) -> list[dict]:

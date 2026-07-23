@@ -350,23 +350,52 @@ class HistoryDB:
                          int(mapping.human_override), mapping.evidence_json),
                     )
 
-    def get_event_history(self, event_id: str) -> dict:
-        """Fetch chronological quotes and states for an event for charting."""
+    def get_event_history(
+        self, event_id: str, *, after_ts: float | None = None,
+        limit: int | None = None,
+    ) -> dict:
+        """Fetch chronological quotes and states for an event for charting.
+
+        ``after_ts`` restricts the window to observations at or after a
+        timestamp (for incremental fetches), and ``limit`` bounds each series to
+        its most-recent N points. Both default to ``None`` (return the full
+        history, unchanged) but let a caller cap peak memory so it scales with
+        the requested page size rather than the total rows an event accumulated.
+        """
+        quotes_rows = self._history_series(
+            "SELECT market, outcome, probability, observed_at FROM quotes_history",
+            event_id, after_ts=after_ts, limit=limit,
+        )
+        states_rows = self._history_series(
+            "SELECT home_score, away_score, status, observed_at FROM states_history",
+            event_id, after_ts=after_ts, limit=limit,
+        )
+        return {"quotes": quotes_rows, "states": states_rows}
+
+    def _history_series(
+        self, select: str, event_id: str, *,
+        after_ts: float | None, limit: int | None,
+    ) -> list[dict]:
+        where = "event_id=%s"
+        params: list = [event_id]
+        if after_ts is not None:
+            where += " AND observed_at >= %s"
+            params.append(after_ts)
         with self._lock:
             with self._db.cursor(dict_rows=True) as cur:
+                if limit is not None:
+                    # Take the most recent N at the database, then restore
+                    # ascending order for the chart, so a long event never
+                    # hydrates its entire history into Python.
+                    params.append(limit)
+                    self._db.execute(
+                        cur,
+                        f"{select} WHERE {where} ORDER BY observed_at DESC LIMIT %s",
+                        tuple(params),
+                    )
+                    return [dict(r) for r in reversed(cur.fetchall())]
                 self._db.execute(
-                    cur,
-                    "SELECT market, outcome, probability, observed_at FROM quotes_history WHERE event_id=%s ORDER BY observed_at ASC", 
-                    (event_id,)
+                    cur, f"{select} WHERE {where} ORDER BY observed_at ASC",
+                    tuple(params),
                 )
-                quotes_rows = cur.fetchall()
-                self._db.execute(
-                    cur,
-                    "SELECT home_score, away_score, status, observed_at FROM states_history WHERE event_id=%s ORDER BY observed_at ASC", 
-                    (event_id,)
-                )
-                states_rows = cur.fetchall()
-                return {
-                    "quotes": [dict(r) for r in quotes_rows],
-                    "states": [dict(r) for r in states_rows]
-                }
+                return [dict(r) for r in cur.fetchall()]

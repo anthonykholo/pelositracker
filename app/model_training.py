@@ -741,32 +741,44 @@ def build_calibration_artifact(
     }
 
 
+def iter_observations_jsonl(path: str | Path) -> Iterable[EvaluationObservation]:
+    """Yield observations one line at a time.
+
+    Streaming keeps peak memory close to a single parsed row rather than
+    "entire file text + a full list of parsed rows", which matters when the
+    offline training/evaluation input grows large. Callers that genuinely need
+    the whole set materialized can wrap this in ``tuple(...)`` (see
+    ``load_observations_jsonl``); callers that only make a single pass should
+    iterate directly.
+    """
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+                yield EvaluationObservation(
+                    event_id=str(payload["event_id"]),
+                    observed_at=datetime.fromisoformat(
+                        str(payload["observed_at"]).replace("Z", "+00:00")
+                    ),
+                    sport=str(payload["sport"]),
+                    league=str(payload["league"]),
+                    market=str(payload["market"]),
+                    outcome=float(payload["outcome"]),
+                    candidate_probabilities={
+                        str(name): float(value)
+                        for name, value in dict(payload["candidate_probabilities"]).items()
+                    },
+                    executable_cost=float(payload["executable_cost"]),
+                    execution_cost_error=float(payload["execution_cost_error"]),
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(f"invalid observation on JSONL line {line_number}") from exc
+
+
 def load_observations_jsonl(path: str | Path) -> list[EvaluationObservation]:
-    rows: list[EvaluationObservation] = []
-    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-            rows.append(EvaluationObservation(
-                event_id=str(payload["event_id"]),
-                observed_at=datetime.fromisoformat(
-                    str(payload["observed_at"]).replace("Z", "+00:00")
-                ),
-                sport=str(payload["sport"]),
-                league=str(payload["league"]),
-                market=str(payload["market"]),
-                outcome=float(payload["outcome"]),
-                candidate_probabilities={
-                    str(name): float(value)
-                    for name, value in dict(payload["candidate_probabilities"]).items()
-                },
-                executable_cost=float(payload["executable_cost"]),
-                execution_cost_error=float(payload["execution_cost_error"]),
-            ))
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ValueError(f"invalid observation on JSONL line {line_number}") from exc
-    return rows
+    return list(iter_observations_jsonl(path))
 
 
 def write_artifact(payload: dict[str, Any], path: str | Path) -> None:
@@ -806,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, payload in dict(candidate_payload).items()
     }
     artifact = build_calibration_artifact(
-        load_observations_jsonl(arguments.observations),
+        iter_observations_jsonl(arguments.observations),
         specifications=specifications,
         model_selection_through=arguments.selection_through,
         calibration_through=arguments.calibration_through,

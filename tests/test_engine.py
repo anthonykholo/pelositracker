@@ -57,6 +57,40 @@ def test_soft_book_lagging_consensus_is_display_only_without_fill_depth():
     assert .58 < home.market_fair_prob < .62       # ~0.60 sharp consensus
 
 
+def test_stale_duplicate_quotes_collapse_to_freshest_without_changing_decisions():
+    """The live store retains a long tail of superseded quotes per selection.
+    The engine keeps only the freshest valid quote per selection, so replaying
+    the same selections with an older, differently-priced history prepended must
+    yield byte-identical decisions to evaluating the latest snapshot alone."""
+    engine = SignalEngine(confidence_threshold=50, edge_threshold=.02)
+    latest = [
+        q("Pinnacle", "home", .60), q("Pinnacle", "away", .40),
+        q("Betfair", "home", .60), q("Betfair", "away", .40),
+        q("DraftKings", "home", .545, bid=.54, ask=.55),
+        q("DraftKings", "away", .455, bid=.45, ask=.46),
+    ]
+    old = NOW - timedelta(minutes=5)
+    stale = [
+        Quote("e", "moneyline", outcome, price, source, old,
+              bid=price - .01, ask=price + .01)
+        for source in ("Pinnacle", "Betfair", "DraftKings")
+        for outcome, price in (("home", .30), ("away", .70))  # very different prices
+    ]
+
+    def decisions(signals):
+        return {
+            (s.market, s.outcome, s.quote_source): (
+                round(s.market_fair_prob, 9), round(s.edge, 9), s.action)
+            for s in signals
+        }
+
+    baseline = engine.evaluate("e", latest, [], as_of=NOW)
+    with_history = engine.evaluate("e", stale + latest, [], as_of=NOW)
+    assert decisions(baseline) == decisions(with_history)
+    # And the fresh selection actually survived (sanity: not an empty match).
+    assert any(s.outcome == "home" for s in with_history)
+
+
 def test_wide_spread_blocks_signal():
     engine = SignalEngine(confidence_threshold=0, edge_threshold=-1)
     quotes = [Quote("e", "moneyline", side, .5, src, NOW, bid=.40, ask=.51)

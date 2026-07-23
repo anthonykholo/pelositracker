@@ -1073,10 +1073,16 @@ async def event_view(event_id: str):
 
 
 @app.get("/api/events/{event_id}/history", dependencies=[Depends(verify_auth)])
-async def get_event_history_api(event_id: str):
+async def get_event_history_api(
+    event_id: str, after_ts: float | None = None, limit: int | None = None
+):
     if history_db is None:
         raise HTTPException(503, "History database not available")
-    return await asyncio.to_thread(history_db.get_event_history, event_id)
+    if limit is not None and limit <= 0:
+        raise HTTPException(400, "limit must be positive")
+    return await asyncio.to_thread(
+        history_db.get_event_history, event_id, after_ts=after_ts, limit=limit
+    )
 
 
 @app.get("/api/events/{event_id}", dependencies=[Depends(verify_auth)])
