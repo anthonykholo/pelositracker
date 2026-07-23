@@ -134,6 +134,68 @@ def brier_decomposition(bets: list[dict], prob_key: str = "entry_calibrated_prob
     }
 
 
+def _pav_blocks(outcomes: list[float]) -> list[tuple[float, int]]:
+    """Pool-adjacent-violators isotonic fit of 0/1 ``outcomes`` already ordered by
+    forecast. Returns ``(block_mean, block_size)`` with non-decreasing means -- the
+    nonparametric recalibration underlying a CORP reliability diagram."""
+    blocks: list[list[float]] = []  # each: [sum_of_outcomes, count]
+    for outcome in outcomes:
+        block = [outcome, 1.0]
+        while blocks and blocks[-1][0] / blocks[-1][1] >= block[0] / block[1]:
+            previous = blocks.pop()
+            block[0] += previous[0]
+            block[1] += previous[1]
+        blocks.append(block)
+    return [(total / count, int(count)) for total, count in blocks]
+
+
+def corp_reliability(bets: list[dict], prob_key: str = "entry_calibrated_prob") -> dict | None:
+    """CORP reliability diagram + score decomposition (Dimitriadis-Gneiting-Jordan).
+
+    Recalibrates the forecasts with isotonic regression (PAV) instead of arbitrary
+    fixed bins, then reports the exact Brier decomposition
+    ``mean_brier = miscalibration - discrimination + uncertainty`` where each term
+    is score-based (``MCB = S(f) - S(x_hat)``, ``UNC = y_bar(1-y_bar)``,
+    ``DSC = UNC - S(x_hat)``). All three terms are non-negative and the identity is
+    exact. This replaces fixed-bin ECE as the primary calibration diagnostic; the
+    legacy ``reliability``/``ece`` fields remain for compatibility.
+    """
+    rows = _scored(bets, prob_key)
+    if not rows:
+        return None
+    data = sorted(
+        ((_probability(row, prob_key), float(row["settled_result"])) for row in rows),
+        key=lambda item: (item[0], item[1]),
+    )
+    forecasts = [forecast for forecast, _ in data]
+    outcomes = [outcome for _, outcome in data]
+    count = len(outcomes)
+    fitted: list[float] = []
+    curve: list[dict] = []
+    index = 0
+    for block_rate, size in _pav_blocks(outcomes):
+        window = forecasts[index:index + size]
+        curve.append({
+            "mean_predicted": sum(window) / size,
+            "calibrated_rate": block_rate,
+            "count": size,
+        })
+        fitted.extend([block_rate] * size)
+        index += size
+    base_rate = sum(outcomes) / count
+    brier_forecast = sum((f - y) ** 2 for f, y in zip(forecasts, outcomes)) / count
+    brier_recalibrated = sum((x - y) ** 2 for x, y in zip(fitted, outcomes)) / count
+    uncertainty = base_rate * (1.0 - base_rate)
+    return {
+        "n": count,
+        "miscalibration": brier_forecast - brier_recalibrated,
+        "discrimination": uncertainty - brier_recalibrated,
+        "uncertainty": uncertainty,
+        "mean_brier": brier_forecast,
+        "curve": curve,
+    }
+
+
 def calibration_intercept_slope(
     bets: list[dict], prob_key: str = "entry_calibrated_prob"
 ) -> dict[str, float] | None:
@@ -408,7 +470,8 @@ def summary(bets: list[dict], decisions: list[dict] | None = None) -> dict:
                 "model part of the paper action rule"
             ),
         },
-        "reliability": bins,
+        "reliability": bins,  # legacy fixed-bin diagram (compatibility only)
+        "reliability_corp": corp_reliability(bets, model_key),  # primary diagnostic
         "execution": execution_summary(bets),
         "portfolio": portfolio_summary(bets),
         "bootstrap": {

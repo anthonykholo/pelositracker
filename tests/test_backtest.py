@@ -148,6 +148,44 @@ def test_fill_rate_counts_only_complete_fills_not_a_sliver():
     assert report["cash_fill_ratio"] == pytest.approx(101.0 / 200.0)
 
 
+def test_corp_reliability_decomposition_is_exact_and_nonnegative():
+    # Two forecast levels, each half right -> a well-defined isotonic recalibration.
+    bets = [
+        {"entry_calibrated_prob": 0.2, "settled_result": 0.0},
+        {"entry_calibrated_prob": 0.2, "settled_result": 1.0},
+        {"entry_calibrated_prob": 0.8, "settled_result": 1.0},
+        {"entry_calibrated_prob": 0.8, "settled_result": 0.0},
+        {"entry_calibrated_prob": 0.8, "settled_result": 1.0},
+    ]
+    corp = backtest.corp_reliability(bets, "entry_calibrated_prob")
+    assert corp is not None and corp["n"] == 5
+    # Exact CORP identity: mean_brier == MCB - DSC + UNC, and mean_brier == the Brier score.
+    assert corp["mean_brier"] == pytest.approx(
+        corp["miscalibration"] - corp["discrimination"] + corp["uncertainty"])
+    assert corp["mean_brier"] == pytest.approx(
+        backtest.brier_score(bets, "entry_calibrated_prob"))
+    # All three components are non-negative.
+    assert corp["miscalibration"] >= -1e-12
+    assert corp["discrimination"] >= -1e-12
+    assert corp["uncertainty"] >= 0.0
+    # The recalibrated reliability curve is monotonically non-decreasing.
+    rates = [point["calibrated_rate"] for point in corp["curve"]]
+    assert rates == sorted(rates)
+
+
+def test_corp_reliability_is_wired_into_the_report():
+    bets = [
+        {"event_id": "e", "entry_calibrated_prob": 0.6, "entry_fair_prob": 0.6,
+         "entry_executable": 0.5, "settled_result": 1.0},
+        {"event_id": "e", "entry_calibrated_prob": 0.4, "entry_fair_prob": 0.4,
+         "entry_executable": 0.5, "settled_result": 0.0},
+    ]
+    report = backtest.summary(bets)
+    assert report["reliability_corp"] is not None
+    assert report["reliability_corp"]["n"] == 2
+    assert "reliability" in report  # legacy fixed-bin diagram still present
+
+
 def test_drawdown_is_order_independent_and_fails_closed_without_timestamps():
     rows = [
         {"event_id": "a", "settled_ts": 2.0, "filled_shares": 10.0,
