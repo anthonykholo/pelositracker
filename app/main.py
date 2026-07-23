@@ -59,6 +59,7 @@ from .model_registry import load_independent_models
 from .telemetry import memory_snapshot, runtime_telemetry, start_memory_trace
 from .identity import (CanonicalEvent, MappingDecision, MappingStatus)
 from .domain.time import parse_provider_timestamp
+from .http_clients import close_shared_client, open_shared_client
 from .notify import notify_webhook
 
 
@@ -94,6 +95,15 @@ _event_locks: dict[str, asyncio.Lock] = {}
 _pregame: dict[str, dict] = {}  # event_id -> {"spread": home point, "total": line}, captured near tip
 _subscribers: set[asyncio.Queue] = set()  # SSE clients for real-time dashboard pushes
 _notification_tasks: set[asyncio.Task] = set()
+# The SSE snapshot is identical for every subscriber, so it is built at most
+# once per change instead of once per subscriber. _notify_subscribers bumps the
+# version; the first coroutine to observe a new version rebuilds under the lock
+# and caches the payload, the rest reuse it. Without this, N open dashboards
+# forced N full recomputes + JSON serializations of the whole event list on
+# every push.
+_snapshot_version = 0
+_snapshot_cache: dict = {"version": -1, "payload": ""}
+_snapshot_lock = asyncio.Lock()
 # The global sports feed emits a payload for *every* slug it sees, not just the
 # ones we track, so caching the full payload per slug forever is an unbounded
 # leak. Split by access pattern instead: discovery only needs a normalized
@@ -140,6 +150,8 @@ async def verify_auth(request: Request):
 
 def _notify_subscribers() -> None:
     """Wake every SSE client that a snapshot changed (coalesced per client)."""
+    global _snapshot_version
+    _snapshot_version += 1  # invalidate the cached payload; rebuilt lazily on demand
     for queue in list(_subscribers):
         if queue.empty():
             try:
@@ -874,6 +886,7 @@ async def lifespan(_: FastAPI):
     auto_task: asyncio.Task | None = None
     if settings.enable_memory_trace:
         start_memory_trace()
+    open_shared_client()  # shared keep-alive pool for one-shot provider fetches
     try:
         ledger = Ledger()
         account_book = AccountBook()
@@ -907,6 +920,9 @@ async def lifespan(_: FastAPI):
         background.extend(_notification_tasks)
         _notification_tasks.clear()
         await _cancel_tasks(background)
+        # Close the shared HTTP pool only after every task that could borrow it
+        # has been cancelled and awaited above.
+        await close_shared_client()
 
         for database_store in (ledger, account_book, history_db, monitor_state):
             if database_store is not None:
@@ -1142,10 +1158,23 @@ async def list_events():
 
 
 async def _events_snapshot_sse() -> str:
-    views = await asyncio.gather(
-        *(_event_view_or_none(event.id) for event in _sort_events_by_edge()))
-    payload = json.dumps([view for view in views if view is not None], default=str)
-    return f"data: {payload}\n\n"
+    """Build the events SSE frame, at most once per change across all subscribers.
+
+    The version captured on entry is the coalescing token: if the cache already
+    holds it, return the shared payload; otherwise one coroutine rebuilds it
+    under the lock while the rest reuse the result. Each build still reads the
+    live store, so a payload is never staler than the notification that woke it."""
+    target = _snapshot_version
+    if _snapshot_cache["version"] == target:
+        return _snapshot_cache["payload"]
+    async with _snapshot_lock:
+        if _snapshot_cache["version"] != target:
+            views = await asyncio.gather(
+                *(_event_view_or_none(event.id) for event in _sort_events_by_edge()))
+            payload = json.dumps([view for view in views if view is not None], default=str)
+            _snapshot_cache["payload"] = f"data: {payload}\n\n"
+            _snapshot_cache["version"] = target
+        return _snapshot_cache["payload"]
 
 
 @app.get("/api/stream", dependencies=[Depends(verify_auth)])

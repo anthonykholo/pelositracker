@@ -6,13 +6,15 @@ import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Awaitable, Callable
+from typing import AsyncIterator, Awaitable, Callable
 from urllib.parse import unquote, urlparse
 
 import httpx
 import websockets
 
+from .http_clients import current_shared_client
 from .models import Event, GameState, Quote
 from .matching import closest_start, team_match_score
 from .domain.time import parse_provider_timestamp
@@ -288,8 +290,22 @@ def _visible_liquidity(bid_size: float | None, ask_size: float | None) -> float 
     return (bid_size or 0.0) + (ask_size or 0.0)
 
 
+@asynccontextmanager
+async def _borrow_client(**kwargs) -> AsyncIterator[httpx.AsyncClient]:
+    """Yield the app's shared keep-alive pool when one is open, else a
+    short-lived client. Reuses connections across the many event-setup and
+    discovery fetches to the same hosts while keeping behavior identical (and
+    the ``httpx.AsyncClient`` fallback monkeypatchable) when no pool is open."""
+    shared = current_shared_client()
+    if shared is not None:
+        yield shared
+        return
+    async with httpx.AsyncClient(**kwargs) as owned:
+        yield owned
+
+
 async def polymarket_event(slug: str) -> dict:
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _borrow_client(timeout=15) as client:
         response = await client.get(f"https://gamma-api.polymarket.com/events/slug/{slug}")
         response.raise_for_status()
         return response.json()
@@ -476,7 +492,7 @@ async def polymarket_sports_events(limit_per_league: int = 100,
     """
     leagues = [s.strip() for s in os.getenv("DISCOVER_LEAGUES", "").split(",") if s.strip()] \
         or list(_DEFAULT_LEAGUES)
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with _borrow_client(timeout=20) as client:
         async def league_events(slug: str, ascending: bool) -> list[dict]:
             try:
                 response = await client.get(
@@ -484,6 +500,7 @@ async def polymarket_sports_events(limit_per_league: int = 100,
                     params={"closed": "false", "active": "true", "limit": str(limit_per_league),
                             "tag_slug": slug, "order": "startDate",
                             "ascending": "true" if ascending else "false"},
+                    timeout=20,
                 )
                 response.raise_for_status()
                 return response.json()
@@ -509,7 +526,7 @@ async def match_odds_api_event(sport_key: str | None, title: str,
     if not key or not sport_key:
         return None
     url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events"
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _borrow_client(timeout=15) as client:
         response = await client.get(url, params={"apiKey": key, "dateFormat": "iso"})
         response.raise_for_status()
     participants = [part.strip() for part in _MATCHUP_RE.split(title, maxsplit=1)]
@@ -690,7 +707,7 @@ async def _initial_polymarket_quotes(event: Event, token_meta: dict[str, dict]) 
     """Fetch complete snapshots through the documented bulk endpoint (max 500)."""
     tokens = list(token_meta)
     quotes: list[Quote] = []
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with _borrow_client(timeout=15) as client:
         for start in range(0, len(tokens), 500):
             batch = tokens[start:start + 500]
             response = await client.post(
