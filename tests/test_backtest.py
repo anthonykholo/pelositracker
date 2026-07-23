@@ -108,6 +108,63 @@ def test_metrics_ignore_unsettled_and_unclosed():
     assert backtest.log_loss(bets) is None
 
 
+def test_calibrated_metric_does_not_backfill_missing_probability_with_uncalibrated():
+    bets = [
+        {"entry_fair_prob": 0.9, "entry_calibrated_prob": 0.6, "settled_result": 1.0},
+        {"entry_fair_prob": 0.9, "settled_result": 0.0},  # no calibrated probability
+    ]
+    # Only the row that actually carries a calibrated probability is scored.
+    calibrated = backtest.brier_score(bets, "entry_calibrated_prob")
+    assert calibrated == pytest.approx((0.6 - 1.0) ** 2)
+    # The old silent fallback mixed the uncalibrated 0.9 into the label-0 row.
+    backfilled = ((0.6 - 1.0) ** 2 + (0.9 - 0.0) ** 2) / 2
+    assert calibrated != pytest.approx(backfilled)
+    # The report exposes the calibrated coverage so a subset metric is visible.
+    report = backtest.summary(bets)
+    assert report["n_settled"] == 2
+    assert report["model"]["n_scored"] == 1
+
+
+def test_missing_filled_cash_invalidates_pnl_instead_of_booking_it_free():
+    # A settled winner with shares filled but no recorded cash paid.
+    row = {"settled_result": 1.0, "filled_shares": 20.0, "requested_cash": 10.0}
+    assert backtest._paper_profit(row) is None
+    # It must not surface as +20 profit or a $0-cost drawdown path.
+    assert backtest.execution_summary([row])["net_paper_return"] is None
+    assert backtest.portfolio_summary([row])["max_drawdown_dollars"] is None
+
+
+def test_fill_rate_counts_only_complete_fills_not_a_sliver():
+    bets = [
+        {"requested_cash": 100.0, "filled_cash": 100.0, "filled_shares": 200.0},  # complete
+        {"requested_cash": 100.0, "filled_cash": 1.0, "filled_shares": 2.0},      # partial sliver
+    ]
+    report = backtest.execution_summary(bets)
+    assert report["submitted"] == 2
+    assert report["filled"] == 1                       # only the complete order
+    assert report["orders_with_partial_fill"] == 1
+    assert report["fill_rate"] == pytest.approx(0.5)
+    assert report["any_fill_rate"] == pytest.approx(1.0)
+    assert report["cash_fill_ratio"] == pytest.approx(101.0 / 200.0)
+
+
+def test_drawdown_is_order_independent_and_fails_closed_without_timestamps():
+    rows = [
+        {"event_id": "a", "settled_ts": 2.0, "filled_shares": 10.0,
+         "filled_cash": 5.0, "settled_result": 0.0},   # -5 at t=2
+        {"event_id": "b", "settled_ts": 1.0, "filled_shares": 10.0,
+         "filled_cash": 5.0, "settled_result": 1.0},   # +5 at t=1
+    ]
+    forward = backtest.portfolio_summary(rows)["max_drawdown_dollars"]
+    backward = backtest.portfolio_summary(list(reversed(rows)))["max_drawdown_dollars"]
+    # +5 (t=1) then -5 (t=2): peak 5, trough 0 -> drawdown 5, whatever the input order.
+    assert forward == backward == pytest.approx(5.0)
+    # A realized-P&L row with no usable timestamp makes the whole path undefined.
+    rows.append({"event_id": "c", "filled_shares": 10.0,
+                 "filled_cash": 5.0, "settled_result": 0.0})
+    assert backtest.portfolio_summary(rows)["max_drawdown_dollars"] is None
+
+
 def test_net_return_does_not_subtract_execution_fee_twice():
     bets = [{
         "settled_result": 1.0,

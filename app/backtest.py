@@ -38,24 +38,33 @@ def _settled(bets: list[dict]) -> list[dict]:
     return [b for b in bets if b.get("settled_result") is not None]
 
 
+def _scored(bets: list[dict], prob_key: str) -> list[dict]:
+    """Settled rows that actually carry ``prob_key``.
+
+    A missing calibrated probability stays missing: it is never backfilled with
+    the uncalibrated fair value, so a metric reported as "calibrated" is only ever
+    computed over rows that truly had a calibrated probability.
+    """
+    return [b for b in bets
+            if b.get("settled_result") is not None and b.get(prob_key) is not None]
+
+
 def _probability(row: dict, key: str) -> float:
     value = row.get(key)
-    if value is None and key == "entry_calibrated_prob":
-        value = row.get("entry_fair_prob")
     if value is None:
         raise ValueError(f"missing probability field: {key}")
     return float(value)
 
 
 def brier_score(bets: list[dict], prob_key: str = "entry_fair_prob") -> float | None:
-    rows = _settled(bets)
+    rows = _scored(bets, prob_key)
     if not rows:
         return None
     return _mean([(_probability(b, prob_key) - b["settled_result"]) ** 2 for b in rows])
 
 
 def log_loss(bets: list[dict], prob_key: str = "entry_fair_prob") -> float | None:
-    rows = _settled(bets)
+    rows = _scored(bets, prob_key)
     if not rows:
         return None
     total = 0.0
@@ -68,7 +77,7 @@ def log_loss(bets: list[dict], prob_key: str = "entry_fair_prob") -> float | Non
 
 def reliability_bins(bets: list[dict], prob_key: str = "entry_fair_prob", n_bins: int = 10) -> list[dict]:
     """Group settled bets by predicted probability for a reliability diagram."""
-    rows = _settled(bets)
+    rows = _scored(bets, prob_key)
     bins: list[dict] = []
     for i in range(n_bins):
         lo, hi = i / n_bins, (i + 1) / n_bins
@@ -101,7 +110,7 @@ def expected_calibration_error(bins: list[dict]) -> float | None:
 def brier_decomposition(bets: list[dict], prob_key: str = "entry_calibrated_prob",
                         n_bins: int = 10) -> dict[str, float] | None:
     """Murphy reliability/resolution/uncertainty decomposition by bins."""
-    rows = _settled(bets)
+    rows = _scored(bets, prob_key)
     if not rows:
         return None
     bins = reliability_bins(rows, prob_key, n_bins)
@@ -129,7 +138,7 @@ def calibration_intercept_slope(
     bets: list[dict], prob_key: str = "entry_calibrated_prob"
 ) -> dict[str, float] | None:
     """Fit outcome ~ intercept + slope*logit(p) without external ML dependencies."""
-    rows = _settled(bets)
+    rows = _scored(bets, prob_key)
     if len(rows) < 3:
         return None
     outcomes = [float(row["settled_result"]) for row in rows]
@@ -205,24 +214,48 @@ def event_block_interval(
 def _paper_profit(row: dict) -> float | None:
     if row.get("settled_result") is None or row.get("filled_shares") is None:
         return None
-    shares = float(row["filled_shares"])
     # PaperExecutionSimulator.filled_cash is the total cash paid, including
     # execution fees. Keep the fee column as separate lineage/reporting data,
-    # but do not subtract it twice from settled profit.
-    cash = float(row.get("filled_cash") or 0.0)
-    return shares * float(row["settled_result"]) - cash
+    # but do not subtract it twice from settled profit. A missing cash figure
+    # makes the P&L undefined: treating it as $0 would book the position as free
+    # and inflate profit, so the row is invalidated instead.
+    cash = row.get("filled_cash")
+    if cash is None:
+        return None
+    shares = float(row["filled_shares"])
+    return shares * float(row["settled_result"]) - float(cash)
+
+
+def _completely_filled(row: dict) -> bool:
+    """A submitted order whose filled cash reached the cash it requested.
+
+    ``requested_cash`` is the all-in cash the order asked to deploy and a full
+    paper fill lands ``filled_cash`` exactly on it, so cash completeness is a
+    faithful proxy for a full fill without a per-order requested-share field.
+    """
+    requested = float(row.get("requested_cash") or 0.0)
+    cash = row.get("filled_cash")
+    return cash is not None and requested > 0 and float(cash) >= requested - _EPS
 
 
 def execution_summary(bets: list[dict]) -> dict[str, float | int | None]:
     submitted = [row for row in bets if row.get("requested_cash") is not None]
-    filled = [row for row in submitted if float(row.get("filled_shares") or 0.0) > 0]
+    any_fill = [row for row in submitted if float(row.get("filled_shares") or 0.0) > 0]
+    complete = [row for row in any_fill if _completely_filled(row)]
     profits = [value for row in bets if (value := _paper_profit(row)) is not None]
-    turnover = sum(float(row.get("filled_cash") or 0.0) for row in filled)
-    fees = sum(float(row.get("execution_fee") or 0.0) for row in filled)
+    requested_total = sum(float(row.get("requested_cash") or 0.0) for row in submitted)
+    turnover = sum(float(row.get("filled_cash") or 0.0) for row in any_fill)
+    fees = sum(float(row.get("execution_fee") or 0.0) for row in any_fill)
     return {
         "submitted": len(submitted),
-        "filled": len(filled),
-        "fill_rate": len(filled) / len(submitted) if submitted else None,
+        # A partial sliver is not a fill: ``fill_rate`` counts only orders that
+        # filled completely. The any-fill count and the cash-weighted ratio are
+        # reported separately so a tiny partial can never masquerade as a fill.
+        "filled": len(complete),
+        "orders_with_partial_fill": len(any_fill) - len(complete),
+        "fill_rate": len(complete) / len(submitted) if submitted else None,
+        "any_fill_rate": len(any_fill) / len(submitted) if submitted else None,
+        "cash_fill_ratio": turnover / requested_total if requested_total else None,
         "turnover": turnover,
         "fees": fees,
         "net_paper_return": sum(profits) if profits else None,
@@ -230,17 +263,40 @@ def execution_summary(bets: list[dict]) -> dict[str, float | int | None]:
     }
 
 
+def _pnl_timestamp(row: dict) -> float | None:
+    """Settlement time used to order the P&L path, or None if unknowable.
+
+    Falls back to entry time, but never to epoch 0: a row with no usable
+    timestamp must not silently sort to the front of the drawdown path.
+    """
+    for key in ("settled_ts", "entry_ts"):
+        value = row.get(key)
+        if value is not None:
+            return float(value)
+    return None
+
+
 def portfolio_summary(bets: list[dict]) -> dict[str, float | dict | None]:
-    settled = sorted(
-        ((float(row.get("settled_ts") or row.get("entry_ts") or 0.0), profit, row)
-         for row in bets if (profit := _paper_profit(row)) is not None),
-        key=lambda value: value[0],
-    )
-    equity = peak = max_drawdown = 0.0
-    for _, profit, _ in settled:
-        equity += profit
-        peak = max(peak, equity)
-        max_drawdown = max(max_drawdown, peak - equity)
+    pnl_rows = [(row, profit) for row in bets
+                if (profit := _paper_profit(row)) is not None]
+    timestamps = [_pnl_timestamp(row) for row, _ in pnl_rows]
+    # Fail closed: if any realized-P&L row cannot be placed on the timeline the
+    # drawdown path is undefined -- report None rather than a misordered number.
+    if pnl_rows and all(ts is not None for ts in timestamps):
+        # Net simultaneous settlements so the path is independent of the order in
+        # which same-instant rows happen to be stored (deterministic re-runs).
+        net_by_time: dict[float, float] = {}
+        for ts, (_, profit) in zip(timestamps, pnl_rows):
+            assert ts is not None  # guarded by the all(...) check above
+            net_by_time[ts] = net_by_time.get(ts, 0.0) + profit
+        equity = peak = max_drawdown = 0.0
+        for ts in sorted(net_by_time):
+            equity += net_by_time[ts]
+            peak = max(peak, equity)
+            max_drawdown = max(max_drawdown, peak - equity)
+        drawdown: float | None = max_drawdown
+    else:
+        drawdown = None
     turnover_by_sport: dict[str, float] = {}
     turnover_by_event: dict[str, float] = {}
     total = 0.0
@@ -254,7 +310,7 @@ def portfolio_summary(bets: list[dict]) -> dict[str, float | dict | None]:
     def concentration(values: dict[str, float]) -> float | None:
         return max(values.values()) / total if values and total else None
     return {
-        "max_drawdown_dollars": max_drawdown if settled else None,
+        "max_drawdown_dollars": drawdown,
         "largest_sport_turnover_share": concentration(turnover_by_sport),
         "largest_event_turnover_share": concentration(turnover_by_event),
         "turnover_by_sport": turnover_by_sport,
@@ -325,6 +381,9 @@ def summary(bets: list[dict], decisions: list[dict] | None = None) -> dict:
         },
         "model": {
             "name": "calibrated_consensus",
+            # How many settled rows actually carried a calibrated probability, so a
+            # metric computed over a subset is never mistaken for full coverage.
+            "n_scored": len(_scored(bets, model_key)),
             "brier": brier_score(bets, model_key),
             "log_loss": log_loss(bets, model_key),
             "ece": expected_calibration_error(bins),
