@@ -762,6 +762,72 @@ struct Fair {
 /// Compute one source's fair value for `outcome` given all of its quotes in the
 /// market. Exchanges are read at their mid (already ~de-vigged); traditional
 /// books are de-vigged with Shin, falling back to proportional.
+/// Leave-one-out consensus fair for one outcome of a market, using the same
+/// per-source de-vig, reference filter, and pooling as the main loop. Used to
+/// renormalize three-way (and larger) markets so the pooled outcome
+/// probabilities sum to one; two-way markets are already coherent (logit
+/// symmetry) and never call this.
+#[allow(clippy::too_many_arguments)]
+fn pooled_consensus_for(
+    outcome_key: &str,
+    same_market: &[&QuoteInput],
+    expected_outcomes: &BTreeSet<&str>,
+    target_source_key: &str,
+    policy: Option<&ModelPolicyInput>,
+    now_seconds: f64,
+    max_age: f64,
+) -> Option<f64> {
+    let sources: BTreeSet<String> = same_market.iter().map(|q| q.source_key()).collect();
+    let mut fairs: Vec<Fair> = Vec::new();
+    for source in &sources {
+        let source_quotes: Vec<&QuoteInput> = same_market
+            .iter()
+            .copied()
+            .filter(|q| q.source_key() == *source)
+            .collect();
+        let source_outcomes: BTreeSet<&str> =
+            source_quotes.iter().map(|q| q.outcome_key()).collect();
+        if !source_quotes.iter().any(|q| q.exchange()) && source_outcomes != *expected_outcomes {
+            continue;
+        }
+        if let Some(fair) = source_fair(
+            outcome_key,
+            &source_quotes,
+            policy.map(|value| value.devig_method.as_str()),
+        ) {
+            fairs.push(fair);
+        }
+    }
+    let reference: Vec<&Fair> = fairs
+        .iter()
+        .filter(|f| {
+            f.source_key != target_source_key
+                && f.timestamp_trusted
+                && now_seconds >= f.observed_at
+                && (now_seconds - f.observed_at) <= max_age
+        })
+        .collect();
+    if reference.is_empty() {
+        return None;
+    }
+    let equal_family = clamp(
+        inv_logit(reference.iter().map(|f| logit(f.prob)).sum::<f64>() / reference.len() as f64),
+        0.001,
+        0.999,
+    );
+    let selected = policy.and_then(|model| {
+        consensus_probability(
+            &reference,
+            &model.consensus_method,
+            model.sharp_source_family.as_deref(),
+            model.consensus_intercept,
+            &model.family_coefficients,
+            &model.missing_family_coefficients,
+        )
+    });
+    Some(selected.unwrap_or(equal_family))
+}
+
 fn source_fair(
     outcome_key: &str,
     source_quotes: &[&QuoteInput],
@@ -1183,6 +1249,28 @@ fn evaluate(request: EvaluateRequest, now_seconds: f64) -> Vec<SignalOutput> {
         });
         let consensus_supported = policy.is_none() || selected_consensus.is_some();
         let fair = selected_consensus.unwrap_or(equal_family_fair);
+        // Probability coherence: pooling each outcome's logit independently does
+        // not make a three-way (or larger) market sum to one. Renormalize across
+        // the market's outcomes so the consensus is coherent. Two-way is already
+        // coherent by logit symmetry (home + away == 1), so it is left untouched.
+        let fair = if expected_outcomes.len() >= 3 {
+            let coherence_sum: f64 = expected_outcomes
+                .iter()
+                .filter_map(|other| {
+                    pooled_consensus_for(
+                        other, &same_market, &expected_outcomes, &target_source_key,
+                        policy, now_seconds, max_age,
+                    )
+                })
+                .sum();
+            if coherence_sum > 1e-9 {
+                clamp(fair / coherence_sum, 0.001, 0.999)
+            } else {
+                fair
+            }
+        } else {
+            fair
+        };
 
         let dispersion = if ref_probs.len() > 1 {
             population_std_dev(&ref_probs)
@@ -1855,6 +1943,41 @@ mod tests {
         assert!(home.edge > 0.02, "edge was {}", home.edge);
         assert_eq!(home.action, "PAPER_BET");
         assert_eq!(home.n_reference_sources, 2);
+    }
+
+    #[test]
+    fn three_way_consensus_is_probability_coherent() {
+        let now = 1_000.0;
+        let mut quotes = Vec::new();
+        // Two reference books with different (each ~coherent) 3-way opinions.
+        for (outcome, prob) in [("home", 0.55), ("draw", 0.25), ("away", 0.20)] {
+            quotes.push(quote("A", outcome, prob, now));
+        }
+        for (outcome, prob) in [("home", 0.45), ("draw", 0.30), ("away", 0.25)] {
+            quotes.push(quote("B", outcome, prob, now));
+        }
+        // Book C is uniformly cheapest, so it is the bet target (excluded from the
+        // reference) for every outcome -> all three share one leave-one-out basis.
+        for outcome in ["home", "draw", "away"] {
+            let mut c = quote("C", outcome, 0.34, now);
+            c.bid = Some(0.04);
+            c.ask = Some(0.05);
+            quotes.push(c);
+        }
+        let results = evaluate(request(quotes), now);
+        let sum: f64 = ["home", "draw", "away"]
+            .iter()
+            .map(|outcome| {
+                results
+                    .iter()
+                    .find(|signal| signal.outcome == *outcome)
+                    .unwrap()
+                    .consensus_probability
+            })
+            .sum();
+        // Independent logit pools do not sum to one; the renormalization makes the
+        // three-way consensus coherent.
+        assert!((sum - 1.0).abs() < 1e-9, "three-way consensus summed to {sum}");
     }
 
     #[test]
