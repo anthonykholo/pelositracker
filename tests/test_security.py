@@ -54,6 +54,31 @@ def test_rate_limiter_fails_closed_at_limit():
     assert limiter.allow("client", now=11)
 
 
+def test_rate_limiter_evicts_fully_drained_keys():
+    limiter = SlidingWindowLimiter(2, 10)
+    assert limiter.allow("a", now=0)
+    assert limiter.allow("b", now=0)
+    assert set(limiter._attempts) == {"a", "b"}
+    # A later request past both keys' windows triggers a purge of drained keys;
+    # a key with live hits would be untouched (the fails-closed test still holds).
+    assert limiter.allow("c", now=100)
+    assert set(limiter._attempts) == {"c"}
+
+
+def test_expired_sessions_are_swept_on_login_not_left_to_accumulate():
+    manager = AuthManager.from_plaintext({"alice": "correct"}, ttl_seconds=60)
+    now = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    first = manager.login("alice", "correct", as_of=now)
+    assert first is not None
+    # A later login (after the first has expired) sweeps the dead session instead
+    # of leaving it resident until its token is next verified.
+    later = manager.login("alice", "correct", as_of=now + timedelta(seconds=61))
+    assert later is not None
+    assert len(manager._sessions) == 1
+    assert manager.verify(first[0], as_of=now + timedelta(seconds=61)) is None
+    assert manager.verify(later[0], as_of=now + timedelta(seconds=61)) is not None
+
+
 def test_production_rejects_default_credentials_and_multiple_workers():
     with pytest.raises(ValueError, match="credentials"):
         Settings.from_env({"APP_ENV": "production"})
